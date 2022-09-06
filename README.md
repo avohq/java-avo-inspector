@@ -1,2 +1,2 @@
-# java-avo-inspector
-Avo Inspector SDK for Java
+# Avo Inspector SDK for Java
+
