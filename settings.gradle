@@ -1,7 +1,3 @@
 rootProject.name = 'JavaAvoInspector'
-include 'src:main:example'
-findProject(':src:main:example')?.name = 'example'
-include 'example'
-include 'example'
-include 'example-app'
+
 
