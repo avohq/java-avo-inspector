@@ -1,8 +1,9 @@
 plugins {
     id 'java'
+    id 'maven-publish'
 }
 
-group 'is.avo.inspector'
+group 'com.github.avohq'
 version '0.9.4'
 
 repositories {
@@ -15,6 +16,19 @@ dependencies {
     implementation 'org.json:json:20220320'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+        }
+    }
 }
 
 test {
@@ -33,4 +47,9 @@ task createProperties(dependsOn: processResources) {
 
 classes {
     dependsOn createProperties
+}
+
+wrapper {
+    gradleVersion = "7.3.3"
+    distributionType = Wrapper.DistributionType.ALL
 }
