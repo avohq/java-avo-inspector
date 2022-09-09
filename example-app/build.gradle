@@ -1,0 +1,22 @@
+plugins {
+    id 'java'
+}
+
+group 'is.avo.inspector'
+version '10.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: '*.jar')
+    implementation 'org.json:json:20220320'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
+}
+
+test {
+    useJUnitPlatform()
+}
