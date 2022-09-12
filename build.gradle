@@ -1,5 +1,5 @@
 plugins {
-    id 'java'
+    id 'java-library'
     id 'maven-publish'
 }
 
@@ -13,7 +13,7 @@ repositories {
 
 dependencies {
     implementation 'org.jetbrains:annotations:23.0.0'
-    compile 'org.json:json:20220320'
+    api 'org.json:json:20220320'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
 }
