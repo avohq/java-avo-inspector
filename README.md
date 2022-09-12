@@ -49,9 +49,18 @@ Logs are enabled by default in the dev mode and disabled in prod mode based on t
 AvoInspector.enableLogging(true);
 ```
 
-# Sending event schemas for events reported outside of Avo Functions
+# Sending event schemas
 
-Whenever you send tracking event call one of the following methods:
+Whenever you send tracking event call one of the following methods.
+
+Example usage:
+
+```java
+void trackAppOpened(Map<String, ?> appOpenedEventParams) {
+    tracker.track("App Opened", appOpenedEventParams);
+    this.avoInspector.trackSchemaFromEvent("App Opened", appOpenedEventParams);
+}
+```
 
 Read more in the [Avo documentation](https://www.avo.app/docs/implementation/devs-101#inspecting-events)
 
