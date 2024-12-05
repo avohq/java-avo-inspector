@@ -1,86 +1,92 @@
 package is.avo.inspector;
 
 
-import org.jetbrains.annotations.Nullable;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.URL;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import javax.net.ssl.HttpsURLConnection;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 class AvoNetworkCallsHandler {
 
-    String apiKey;
     String envName;
-    String appName;
-    String appVersion;
-    String libVersion;
 
     volatile double samplingRate = 1.0;
+    Consumer<List<Map<String, Object>>> reportToInspector = new Consumer<>() {
+        @Override
+        public void accept(List<Map<String, Object>> data) {
+            try {
+                URL apiUrl = new URL("https://api.avo.app/inspector/v1/track");
 
-    AvoNetworkCallsHandler(String apiKey, String envName, String appName,
-                           String appVersion, String libVersion) {
-        this.apiKey = apiKey;
-        this.envName = envName;
-        this.appName = appName;
-        this.appVersion = appVersion;
-        this.libVersion = libVersion;
-    }
+                HttpsURLConnection connection = null;
+                try {
+                    connection = (HttpsURLConnection) apiUrl.openConnection();
 
-    Map<String, Object> bodyForSessionStartedCall() {
-        Map<String, Object> sessionBody = createBaseCallBody();
-        sessionBody.put("type", "sessionStarted");
-        return sessionBody;
-    }
+                    connection.setRequestMethod("POST");
+                    connection.setDoInput(true);
+                    connection.setDoOutput(true);
 
-    Map<String, Object> bodyForEventSchemaCall(String eventName,
-                                               Map<String, AvoEventSchemaType> schema,
-                                               @Nullable String eventId, @Nullable String eventHash) {
-        JSONArray properties = Util.remapProperties(schema);
+                    writeTrackingCallHeader(connection);
+                    writeTrackingCallBody(data, connection);
 
-        Map<String, Object> eventSchemaBody = createBaseCallBody();
+                    connection.connect();
 
-        if (eventId != null) {
-            eventSchemaBody.put("avoFunction", true);
-            eventSchemaBody.put("eventId", eventId);
-            eventSchemaBody.put("eventHash", eventHash);
-        } else {
-            eventSchemaBody.put("avoFunction", false);
+                    final int responseCode = connection.getResponseCode();
+                    if (responseCode != HttpsURLConnection.HTTP_OK) {
+                        if (AvoInspector.isLogging()) {
+                            System.err.println("AvoInspector: Failed with code " + responseCode);
+                        }
+                    } else {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                        //noinspection TryFinallyCanBeTryWithResources
+                        try {
+                            StringBuilder response = new StringBuilder();
+                            String inputLine = reader.readLine();
+                            while (inputLine != null) {
+                                response.append(inputLine);
+                                inputLine = reader.readLine();
+                            }
+                            JSONObject json;
+                            try {
+                                json = new JSONObject(response.toString());
+                            } catch (JSONException e) {
+                                json = new JSONObject();
+                            }
+
+                            final JSONObject finalJson = json;
+                            samplingRate = finalJson.getDouble("samplingRate");
+                        } finally {
+                            reader.close();
+                        }
+                    }
+                } finally {
+                    if (connection != null) {
+                        connection.disconnect();
+                    }
+                }
+            } catch (IOException e) {
+                if (AvoInspector.isLogging()) {
+                    System.err.println("AvoInspector: Failed to perform network call, will retry later");
+                }
+            } catch (Exception e) {
+                Util.handleException(e, envName);
+            }
         }
+    };
 
-        eventSchemaBody.put("type", "event");
-        eventSchemaBody.put("eventName", eventName);
-        eventSchemaBody.put("eventProperties", properties);
-
-        return eventSchemaBody;
-    }
-
-    private Map<String, Object> createBaseCallBody() {
-        Map<String, Object> result = new HashMap<>();
-
-        result.put("apiKey", apiKey);
-        result.put("appName", appName);
-        result.put("appVersion", appVersion);
-        result.put("libVersion", libVersion);
-        result.put("env", envName);
-        result.put("libPlatform", "java-jvm");
-        result.put("messageId", UUID.randomUUID().toString());
-        result.put("createdAt", Util.currentTimeAsISO8601UTCString());
-        result.put("sessionId", UUID.randomUUID().toString());
-        result.put("samplingRate", samplingRate);
-
-        return result;
+    AvoNetworkCallsHandler(String envName) {
+        this.envName = envName;
     }
 
     @SuppressWarnings("Convert2Lambda")
@@ -90,6 +96,10 @@ class AvoNetworkCallsHandler {
                 System.out.println("Avo Inspector: Last event schema dropped due to sampling rate");
             }
             return;
+        }
+
+        for (Map<String, Object> item : data) {
+            item.put("samplingRate", samplingRate);
         }
 
         if (AvoInspector.isLogging()) {
@@ -111,65 +121,75 @@ class AvoNetworkCallsHandler {
             }
         }
 
+        //reportToInspector =
+
+
+//                new Runnable() {
+//            @Override
+//            @SuppressWarnings("UseSpecificCatch")
+//            public void run() {
+//                try {
+//                    URL apiUrl = new URL("https://api.avo.app/inspector/v1/track");
+//
+//                    HttpsURLConnection connection = null;
+//                    try {
+//                        connection = (HttpsURLConnection) apiUrl.openConnection();
+//
+//                        connection.setRequestMethod("POST");
+//                        connection.setDoInput(true);
+//                        connection.setDoOutput(true);
+//
+//                        writeTrackingCallHeader(connection);
+//                        writeTrackingCallBody(data, connection);
+//
+//                        connection.connect();
+//
+//                        final int responseCode = connection.getResponseCode();
+//                        if (responseCode != HttpsURLConnection.HTTP_OK) {
+//                            if (AvoInspector.isLogging()) {
+//                                System.err.println("AvoInspector: Failed with code " + responseCode);
+//                            }
+//                        } else {
+//                            BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+//                            //noinspection TryFinallyCanBeTryWithResources
+//                            try {
+//                                StringBuilder response = new StringBuilder();
+//                                String inputLine = reader.readLine();
+//                                while (inputLine != null) {
+//                                    response.append(inputLine);
+//                                    inputLine = reader.readLine();
+//                                }
+//                                JSONObject json;
+//                                try {
+//                                    json = new JSONObject(response.toString());
+//                                } catch (JSONException e) {
+//                                    json = new JSONObject();
+//                                }
+//
+//                                final JSONObject finalJson = json;
+//                                samplingRate = finalJson.getDouble("samplingRate");
+//                            } finally {
+//                                reader.close();
+//                            }
+//                        }
+//                    } finally {
+//                        if (connection != null) {
+//                            connection.disconnect();
+//                        }
+//                    }
+//                } catch (IOException e) {
+//                    if (AvoInspector.isLogging()) {
+//                        System.err.println("AvoInspector: Failed to perform network call, will retry later");
+//                    }
+//                } catch (Exception e) {
+//                    Util.handleException(e, envName);
+//                }
+//            }
+       // };
         new Thread(new Runnable() {
             @Override
             public void run() {
-                try {
-                    URL apiUrl = new URL("https://api.avo.app/inspector/v1/track");
-
-                    HttpsURLConnection connection = null;
-                    try {
-                        connection = (HttpsURLConnection) apiUrl.openConnection();
-
-                        connection.setRequestMethod("POST");
-                        connection.setDoInput(true);
-                        connection.setDoOutput(true);
-
-                        writeTrackingCallHeader(connection);
-                        writeTrackingCallBody(data, connection);
-
-                        connection.connect();
-
-                        final int responseCode = connection.getResponseCode();
-                        if (responseCode != HttpsURLConnection.HTTP_OK) {
-                            if (AvoInspector.isLogging()) {
-                                System.err.println("AvoInspector: Failed with code " + responseCode);
-                            }
-                        } else {
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-                            //noinspection TryFinallyCanBeTryWithResources
-                            try {
-                                StringBuilder response = new StringBuilder();
-                                String inputLine = reader.readLine();
-                                while (inputLine != null) {
-                                    response.append(inputLine);
-                                    inputLine = reader.readLine();
-                                }
-                                JSONObject json;
-                                try {
-                                    json = new JSONObject(response.toString());
-                                } catch (JSONException e) {
-                                    json = new JSONObject();
-                                }
-
-                                final JSONObject finalJson = json;
-                                samplingRate = finalJson.getDouble("samplingRate");
-                            } finally {
-                                reader.close();
-                            }
-                        }
-                    } finally {
-                        if (connection != null) {
-                            connection.disconnect();
-                        }
-                    }
-                } catch (IOException e) {
-                    if (AvoInspector.isLogging()) {
-                        System.err.println("AvoInspector: Failed to perform network call, will retry later");
-                    }
-                } catch (Exception e) {
-                    Util.handleException(e, envName);
-                }
+                reportToInspector.accept(data);
             }
         }).start();
     }
@@ -187,9 +207,9 @@ class AvoNetworkCallsHandler {
 
         @SuppressWarnings("CharsetObjectCanBeUsed")
         byte[] bodyBytes = bodyString.getBytes("UTF-8");
-        OutputStream os = connection.getOutputStream();
-        os.write(bodyBytes);
-        os.close();
+        try (OutputStream os = connection.getOutputStream()) {
+            os.write(bodyBytes);
+        }
     }
 
     private void writeTrackingCallHeader(HttpsURLConnection connection) {
