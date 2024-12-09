@@ -30,7 +30,7 @@ public class SamplingRateTests {
             final Map<String, Object> body = avoNetworkCallsBodyFactory.bodyForSessionStartedCall(new AvoInspectorTarget(
                     "apiKey", "appName", "appVersion"
             ));
-            sut.reportInspectorWithBatchBody(new ArrayList<>() {{
+            sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{
                                                  add(body);
                                              }}
             );
@@ -56,7 +56,7 @@ public class SamplingRateTests {
             final Map<String, Object> body = avoNetworkCallsBodyFactory.bodyForSessionStartedCall(new AvoInspectorTarget(
                     "apiKey", "appName", "appVersion"
             ));
-            sut.reportInspectorWithBatchBody(new ArrayList<>() {{
+            sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{
                 add(body);
             }});
         }
@@ -85,7 +85,7 @@ public class SamplingRateTests {
         ));
 
         // When
-        sut.reportInspectorWithBatchBody(new ArrayList<>() {{
+        sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{
             add(body);
         }});
         Thread.sleep(100);

@@ -16,7 +16,23 @@ import org.mockito.Mock;
 import static org.mockito.Mockito.verify;
 import org.mockito.MockitoAnnotations;
 
-record TestObjectEventParam(String filed1, int field2) {}
+class TestObjectEventParam {
+    private final String filed1;
+    private final int field2;
+
+    TestObjectEventParam(String filed1, int field2) {
+        this.filed1 = filed1;
+        this.field2 = field2;
+    }
+
+    public String getFiled1() {
+        return filed1;
+    }
+
+    public int getField2() {
+        return field2;
+    }
+}
 
 public class AvoInspectorTests {
 
@@ -99,7 +115,7 @@ public class AvoInspectorTests {
 
         // Then
         verify(mockNetworkCallsHandler).reportInspectorWithBatchBody(captor.capture());
-        verifyBodies(captor.getValue(), overrideTarget.apiKey(), overrideTarget.appName(), overrideTarget.appVersion(), eventProperties);
+        verifyBodies(captor.getValue(), overrideTarget.getApiKey(), overrideTarget.getAppName(), overrideTarget.getAppVersion(), eventProperties);
     }
 
     @Test
@@ -161,7 +177,7 @@ public class AvoInspectorTests {
 
         // Then
         verify(mockNetworkCallsHandler).reportInspectorWithBatchBody(captor.capture());
-        verifyBodies(captor.getValue(), overrideTarget.apiKey(), overrideTarget.appName(), overrideTarget.appVersion(), eventProperties);
+        verifyBodies(captor.getValue(), overrideTarget.getApiKey(), overrideTarget.getAppName(), overrideTarget.getAppVersion(), eventProperties);
     }
 
     private void verifyBodies(List<Map<String, Object>> bodies, String apiKey, String appName, String appVersion, Object eventProperties) {

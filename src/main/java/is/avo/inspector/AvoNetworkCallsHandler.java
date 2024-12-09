@@ -22,7 +22,8 @@ class AvoNetworkCallsHandler {
     String envName;
 
     volatile double samplingRate = 1.0;
-    Consumer<List<Map<String, Object>>> reportToInspector = new Consumer<>() {
+
+    Consumer<List<Map<String, Object>>> reportToInspector = new Consumer<List<Map<String, Object>>>() {
         @Override
         public void accept(List<Map<String, Object>> data) {
             try {
