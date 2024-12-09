@@ -14,7 +14,13 @@ public interface Inspector {
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties);
 
     @NotNull
+    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
+
+    @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties);
+
+    @NotNull
+    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
 
     void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema);
 

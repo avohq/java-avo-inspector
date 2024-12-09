@@ -67,7 +67,7 @@ Read more in the [Avo documentation](https://www.avo.app/docs/implementation/dev
 
 ### 1.
 
-This methods get actual tracking event parameters, extract schema automatically and send it to the Avo Inspector backend.
+These methods get actual tracking event parameters, extract schema automatically and send it to the Avo Inspector backend.
 It is the easiest way to use the library, just call this method at the same place you call your analytics tools' track methods with the same parameters.
 
 ```java
@@ -78,6 +78,18 @@ avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
                     }});
 ```
 Second parameter can also be a `JSONObject`.
+
+#### Override Avo source
+
+You can track a schema for an Avo source different from the one you've initialised Avo Inspector instance with by providing an additional `AvoInspectorTarget` parameter to the `trackSchemaFromEvent` call.
+
+```java
+avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
+                        put("String Prop", "Prop Value");
+                        put("Float Name", 1.0);
+                        put("Bool Name", true);
+                    }}, new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"));
+```
 
 ### 2.
 

@@ -1,5 +1,8 @@
 *.class
 build/
+.DS_Store
+local.properties
+src/.DS_Store
 
 # Log file
 *.log

@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'com.github.avohq'
-version '1.0.0'
+version '1.1.0'
 
 repositories {
     mavenCentral()
@@ -14,8 +14,11 @@ repositories {
 dependencies {
     implementation 'org.jetbrains:annotations:23.0.0'
     api 'org.json:json:20220320'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
+
+    //testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation "org.mockito:mockito-core:2.28.2"
 }
 
 java {
