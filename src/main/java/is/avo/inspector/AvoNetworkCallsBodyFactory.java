@@ -51,9 +51,9 @@ class AvoNetworkCallsBodyFactory {
     private Map<String, Object> createBaseCallBody(@NotNull AvoInspectorTarget avoInspectorTarget) {
         Map<String, Object> result = new HashMap<>();
 
-        result.put("apiKey", avoInspectorTarget.apiKey());
-        result.put("appName", avoInspectorTarget.appName());
-        result.put("appVersion", avoInspectorTarget.appVersion());
+        result.put("apiKey", avoInspectorTarget.getApiKey());
+        result.put("appName", avoInspectorTarget.getAppName());
+        result.put("appVersion", avoInspectorTarget.getAppVersion());
         result.put("libVersion", libVersion);
         result.put("env", envName);
         result.put("libPlatform", "java-jvm");
