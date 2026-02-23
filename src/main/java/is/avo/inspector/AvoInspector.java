@@ -50,7 +50,7 @@ public class AvoInspector implements Inspector {
 
         this.networkCallsHandler = new AvoNetworkCallsHandler(env.getName());
 
-        this.networkCallsBodyFactory = new AvoNetworkCallsBodyFactory(env.getName(), libVersion);
+        this.networkCallsBodyFactory = new AvoNetworkCallsBodyFactory(env.getName(), libVersion, publicEncryptionKey);
 
         // Initialize event spec validation components (active in dev/staging only)
         this.eventSpecCache = new EventSpecCache();
@@ -82,7 +82,9 @@ public class AvoInspector implements Inspector {
 
             Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
 
-            trackSchemaInternal(eventName, schema, avoInspectorTarget, streamId);
+            // Convert JSONObject to Map for encryption
+            Map<String, Object> rawProps = eventProperties != null ? Util.jsonToMap(eventProperties) : null;
+            trackSchemaInternal(eventName, schema, avoInspectorTarget, streamId, rawProps);
 
             return schema;
 
@@ -107,6 +109,7 @@ public class AvoInspector implements Inspector {
         return this.trackSchemaFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId);
     }
 
+    @SuppressWarnings("unchecked")
     private @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget avoInspectorTarget, @NotNull String streamId) {
         try {
             warnIfStreamIdContainsColon(streamId);
@@ -114,7 +117,9 @@ public class AvoInspector implements Inspector {
 
             Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
 
-            trackSchemaInternal(eventName, schema, avoInspectorTarget, streamId);
+            // Pass raw properties for encryption
+            Map<String, Object> rawProps = eventProperties != null ? new HashMap<>((Map<String, Object>) eventProperties) : null;
+            trackSchemaInternal(eventName, schema, avoInspectorTarget, streamId, rawProps);
 
             return schema;
 
@@ -139,13 +144,15 @@ public class AvoInspector implements Inspector {
     @Override
     public void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema) {
         try {
-            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, "");
+            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, "", null);
         } catch (Exception e) {
             handleException(e, AvoInspector.this.env);
         }
     }
 
-    private void trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema, @NotNull AvoInspectorTarget avoInspectorTarget, @NotNull String anonymousId) {
+    private void trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
+                                     @NotNull AvoInspectorTarget avoInspectorTarget, @NotNull String anonymousId,
+                                     @Nullable Map<String, ?> rawEventProperties) {
         if (eventSchema == null) {
             eventSchema = new HashMap<>();
         }
@@ -153,7 +160,7 @@ public class AvoInspector implements Inspector {
         logPostExtract(eventName, eventSchema);
 
         List<Map<String, Object>> events = new ArrayList<>();
-        events.add(networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema, null, null, avoInspectorTarget, anonymousId));
+        events.add(networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema, null, null, avoInspectorTarget, anonymousId, rawEventProperties));
 
         networkCallsHandler.reportInspectorWithBatchBody(events);
 
