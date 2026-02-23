@@ -106,9 +106,7 @@ class AvoNetworkCallsHandler {
             for (Map<String, Object> item : data) {
                 Object type = item.get("type");
 
-                if (type != null && type.equals("sessionStarted")) {
-                    System.out.println("Avo Inspector: Sending session started event");
-                } else if (type != null && type.equals("event")) {
+                if (type != null && type.equals("event")) {
                     Object eventName = item.get("eventName");
                     Object eventProps = item.get("eventProperties");
 
