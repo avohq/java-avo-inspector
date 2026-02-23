@@ -3,6 +3,7 @@ package is.avo.inspector;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,6 +12,17 @@ import static org.junit.Assert.assertEquals;
 public class SamplingRateTests {
 
     AvoNetworkCallsBodyFactory avoNetworkCallsBodyFactory = new AvoNetworkCallsBodyFactory("envName", "libVersion");
+
+    private Map<String, Object> makeTestBody() {
+        return avoNetworkCallsBodyFactory.bodyForEventSchemaCall(
+                "testEvent",
+                new HashMap<>(),
+                null,
+                null,
+                new AvoInspectorTarget("apiKey", "appName", "appVersion"),
+                ""
+        );
+    }
 
     @Test
     public void doesNotSendDataWithSamplingRate0() throws InterruptedException {
@@ -24,9 +36,7 @@ public class SamplingRateTests {
 
         // Then
         for (int i = 0; i < 1000; i++) {
-            final Map<String, Object> body = avoNetworkCallsBodyFactory.bodyForSessionStartedCall(new AvoInspectorTarget(
-                    "apiKey", "appName", "appVersion"
-            ));
+            final Map<String, Object> body = makeTestBody();
             sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{
                                                  add(body);
                                              }}
@@ -50,9 +60,7 @@ public class SamplingRateTests {
 
         // When
         for (int i = 0; i < 1000; i++) {
-            final Map<String, Object> body = avoNetworkCallsBodyFactory.bodyForSessionStartedCall(new AvoInspectorTarget(
-                    "apiKey", "appName", "appVersion"
-            ));
+            final Map<String, Object> body = makeTestBody();
             sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{
                 add(body);
             }});
@@ -77,9 +85,7 @@ public class SamplingRateTests {
             }
         };
 
-        final Map<String, Object> body = avoNetworkCallsBodyFactory.bodyForSessionStartedCall(new AvoInspectorTarget(
-                "apiKey", "appName", "appVersion"
-        ));
+        final Map<String, Object> body = makeTestBody();
 
         // When
         sut.reportInspectorWithBatchBody(new ArrayList<Map<String, Object>>() {{

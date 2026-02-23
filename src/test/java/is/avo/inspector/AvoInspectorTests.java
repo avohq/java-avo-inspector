@@ -9,6 +9,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -64,19 +65,19 @@ public class AvoInspectorTests {
         eventProperties.put("key3", 1.1);
         eventProperties.put("key4", 6);
         eventProperties.put("key5", JSONObject.NULL);
-        
+
         JSONObject nestedObj = new JSONObject();
         nestedObj.put("key61", "value61");
         nestedObj.put("key62", 62);
         eventProperties.put("key6", nestedObj);
-        
+
         JSONArray array = new JSONArray();
         array.put(1).put(2).put(3);
         eventProperties.put("key7", array);
-        
+
         TestObjectEventParam testObj = new TestObjectEventParam("example", 42);
         eventProperties.put("key8", testObj);
-        
+
         // When
         sut.trackSchemaFromEvent("My Event", eventProperties);
 
@@ -162,7 +163,7 @@ public class AvoInspectorTests {
         eventProperties.put("key5", null);
 
         Map<String, Object> nestedObj = new HashMap<>();
-        nestedObj.put("key61", "value61"); 
+        nestedObj.put("key61", "value61");
         nestedObj.put("key62", 62);
         eventProperties.put("key6", nestedObj);
 
@@ -181,8 +182,8 @@ public class AvoInspectorTests {
     }
 
     private void verifyBodies(List<Map<String, Object>> bodies, String apiKey, String appName, String appVersion, Object eventProperties) {
-        Map<String, Object> actualSessionStartedBody = bodies.get(0);
-        Map<String, Object> actualTrackingBody = bodies.get(1);
+        assertEquals("Batch should contain exactly 1 body (no session started)", 1, bodies.size());
+        Map<String, Object> actualTrackingBody = bodies.get(0);
 
         assertEquals(apiKey, actualTrackingBody.get("apiKey"));
         assertEquals(appName, actualTrackingBody.get("appName"));
@@ -192,21 +193,11 @@ public class AvoInspectorTests {
         assertEquals("java-jvm", actualTrackingBody.get("libPlatform"));
         assertNotNull(actualTrackingBody.get("messageId"));
         assertNotNull(actualTrackingBody.get("createdAt"));
-        assertNotNull(actualTrackingBody.get("sessionId"));
+        assertNotNull(actualTrackingBody.get("anonymousId"));
+        assertNull("sessionId should NOT be present", actualTrackingBody.get("sessionId"));
         assertEquals("event", actualTrackingBody.get("type"));
         assertEquals("My Event", actualTrackingBody.get("eventName"));
         assertEquals(Util.remapProperties(new AvoSchemaExtractor().extractSchema(eventProperties, false)).toString(), actualTrackingBody.get("eventProperties").toString());
         assertEquals(false, actualTrackingBody.get("avoFunction"));
-
-        assertEquals(apiKey, actualSessionStartedBody.get("apiKey"));
-        assertEquals(appName, actualSessionStartedBody.get("appName"));
-        assertEquals(appVersion, actualSessionStartedBody.get("appVersion"));
-        assertEquals("-", actualSessionStartedBody.get("libVersion")); 
-        assertEquals("dev", actualSessionStartedBody.get("env"));
-        assertEquals("java-jvm", actualSessionStartedBody.get("libPlatform"));
-        assertNotNull(actualSessionStartedBody.get("messageId"));
-        assertNotNull(actualSessionStartedBody.get("createdAt"));
-        assertNotNull(actualSessionStartedBody.get("sessionId"));
-        assertEquals("sessionStarted", actualSessionStartedBody.get("type"));
     }
 }

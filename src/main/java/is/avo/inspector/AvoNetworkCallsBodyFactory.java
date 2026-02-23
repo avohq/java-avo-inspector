@@ -18,20 +18,15 @@ class AvoNetworkCallsBodyFactory {
         this.libVersion = libVersion;
     }
 
-    Map<String, Object> bodyForSessionStartedCall(@NotNull AvoInspectorTarget avoInspectorTarget) {
-        Map<String, Object> sessionBody = createBaseCallBody(avoInspectorTarget);
-        sessionBody.put("type", "sessionStarted");
-        return sessionBody;
-    }
-
     @SuppressWarnings("SameParameterValue")
     Map<String, Object> bodyForEventSchemaCall(String eventName,
                                                Map<String, AvoEventSchemaType> schema,
                                                @Nullable String eventId, @Nullable String eventHash,
-                                               @NotNull AvoInspectorTarget avoInspectorTarget) {
+                                               @NotNull AvoInspectorTarget avoInspectorTarget,
+                                               @NotNull String anonymousId) {
         JSONArray properties = Util.remapProperties(schema);
 
-        Map<String, Object> eventSchemaBody = createBaseCallBody(avoInspectorTarget);
+        Map<String, Object> eventSchemaBody = createBaseCallBody(avoInspectorTarget, anonymousId);
 
         if (eventId != null) {
             eventSchemaBody.put("avoFunction", true);
@@ -48,7 +43,8 @@ class AvoNetworkCallsBodyFactory {
         return eventSchemaBody;
     }
 
-    private Map<String, Object> createBaseCallBody(@NotNull AvoInspectorTarget avoInspectorTarget) {
+    private Map<String, Object> createBaseCallBody(@NotNull AvoInspectorTarget avoInspectorTarget,
+                                                   @NotNull String anonymousId) {
         Map<String, Object> result = new HashMap<>();
 
         result.put("apiKey", avoInspectorTarget.getApiKey());
@@ -59,7 +55,7 @@ class AvoNetworkCallsBodyFactory {
         result.put("libPlatform", "java-jvm");
         result.put("messageId", UUID.randomUUID().toString());
         result.put("createdAt", Util.currentTimeAsISO8601UTCString());
-        result.put("sessionId", UUID.randomUUID().toString());
+        result.put("anonymousId", anonymousId);
 
         return result;
     }
