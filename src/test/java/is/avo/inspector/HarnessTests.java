@@ -158,4 +158,24 @@ public class HarnessTests {
         assertEquals(2, exitCode[0]);
         assertTrue(new JSONObject(output).getString("error").startsWith("could not parse input envelope"));
     }
+
+    @Test(timeout = 60_000)
+    public void malformedSequenceStepFieldsAreConfigErrors() throws Exception {
+        String sequence = "{\"suite\":\"batching\",\"fixture_id\":\"steps\",\"operation\":\"sequence\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"prod\",\"version\":\"1.0.0\"},\"steps\":[%s]}";
+        String[][] cases = {
+                {"{\"action\":\"flush\",\"timeoutMs\":\"100\"}", "flush timeoutMs must be an integer"},
+                {"{\"action\":\"flush\",\"timeoutMs\":1.5}", "flush timeoutMs must be an integer"},
+                {"{\"action\":\"trackN\",\"count\":1,\"eventNamePrefix\":7}", "trackN eventNamePrefix must be a string"},
+                {"{\"action\":\"trackN\",\"count\":1,\"streamId\":7}", "trackN streamId must be a string"},
+                {"{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{},\"options\":\"x\"}", "options must be an object"},
+        };
+        for (String[] c : cases) {
+            int[] exitCode = new int[1];
+            String output = runHarness(String.format(sequence, c[0]), exitCode);
+
+            assertEquals(c[1], 2, exitCode[0]);
+            assertEquals(c[1], new JSONObject(output).getString("error"));
+        }
+    }
 }

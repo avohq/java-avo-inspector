@@ -139,12 +139,20 @@ public final class ConformanceHarness {
                         if (!isInt(count) || (Long) count < 1) {
                             return configError(fixtureId, "trackN requires an integer count >= 1");
                         }
+                        String badField = firstNonString(step, "eventNamePrefix", "streamId");
+                        if (badField != null) {
+                            return configError(fixtureId, "trackN " + badField + " must be a string");
+                        }
                         trackN(inspector, (int) (long) (Long) count, string(step.get("eventNamePrefix"), ""),
                                 string(step.get("streamId"), ""));
                         records.put(record("trackN", "resolve", count));
                     } else if ("flush".equals(action)) {
-                        if (step.get("timeoutMs") instanceof Number) {
-                            inspector.flush(((Number) step.get("timeoutMs")).longValue());
+                        Object timeoutMs = step.get("timeoutMs");
+                        if (timeoutMs != null && !(timeoutMs instanceof Long)) {
+                            return configError(fixtureId, "flush timeoutMs must be an integer");
+                        }
+                        if (timeoutMs != null) {
+                            inspector.flush((Long) timeoutMs);
                         } else {
                             inspector.flush();
                         }
@@ -216,6 +224,9 @@ public final class ConformanceHarness {
         String badField = firstNonString(input, "eventName", "streamId");
         if (badField != null) {
             return badField + " must be a string";
+        }
+        if (input.get("options") != null && !(input.get("options") instanceof Map)) {
+            return "options must be an object";
         }
         if (input.get("options") instanceof Map) {
             badField = firstNonString(asMap(input.get("options")), "outputReference", "originHint", "originAppVersion");
