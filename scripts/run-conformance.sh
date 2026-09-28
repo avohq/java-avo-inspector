@@ -33,10 +33,27 @@ else
     git init --quiet "$SPEC_DIR"
     git -C "$SPEC_DIR" remote add origin "$SPEC_REPO_URL"
   fi
+  # An existing checkout may point elsewhere (an old URL, or another SPEC_REPO_URL).
+  git -C "$SPEC_DIR" remote set-url origin "$SPEC_REPO_URL"
   git -C "$SPEC_DIR" fetch --quiet --depth 1 origin "$SPEC_REF"
   git -C "$SPEC_DIR" -c advice.detachedHead=false checkout --quiet --force FETCH_HEAD
   echo "    spec @ $(git -C "$SPEC_DIR" rev-parse --short HEAD)"
 fi
+
+# The suite runner splits --harness on whitespace and does not honor quotes, so a path with
+# spaces (the checkout or JAVA_HOME) is reached through a symlink in a space-free temp directory.
+case "$JAVA$HARNESS_JAR" in
+  *[[:space:]]*)
+    LINK_DIR="$(mktemp -d /tmp/avo-harness.XXXXXX)"
+    trap 'rm -rf "$LINK_DIR"' EXIT
+    case "$JAVA" in
+      *[[:space:]]*) ln -s "$JAVA" "$LINK_DIR/java"; JAVA="$LINK_DIR/java" ;;
+    esac
+    case "$HARNESS_JAR" in
+      *[[:space:]]*) ln -s "$HARNESS_JAR" "$LINK_DIR/avo-inspector-conformance.jar"; HARNESS_JAR="$LINK_DIR/avo-inspector-conformance.jar" ;;
+    esac
+    ;;
+esac
 
 echo "==> Running conformance suite"
 node "$SPEC_DIR/conformance/runner/suite-runner.mjs" --harness "$JAVA -jar $HARNESS_JAR"
