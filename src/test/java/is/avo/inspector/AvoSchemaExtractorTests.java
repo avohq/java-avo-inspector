@@ -135,6 +135,21 @@ public class AvoSchemaExtractorTests {
         assertWire("[{propertyName:n,propertyType:'null'}]", input);
     }
 
+    public static class Pojo {
+        public String name = "n";
+        public long count = 2;
+        public double ratio = 0.0;
+        public java.util.List<String> tags = Arrays.asList("a");
+    }
+
+    @Test
+    public void pojoFieldsAreExtracted() {
+        assertWire("[{propertyName:name,propertyType:string},{propertyName:count,propertyType:int},"
+                        + "{propertyName:ratio,propertyType:float},"
+                        + "{propertyName:tags,propertyType:'list(string)',children:[string]}]",
+                new Pojo());
+    }
+
     @Test
     public void nullInputIsEmpty() {
         assertEquals(0, extractor.extractSchema(null, false).size());
