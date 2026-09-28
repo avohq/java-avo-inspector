@@ -183,6 +183,14 @@ avoInspector.flush(2000);    // custom timeout in milliseconds
 `flush()` never throws, and the instance stays usable afterwards. In serverless functions also
 set `disableBatchTimer(true)`.
 
+As a safety net, each instance registers a JVM shutdown hook that flushes it, waiting up to 10
+seconds. The hook runs when the JVM exits normally (for example when `main` returns or
+`System.exit` is called) or receives SIGTERM. It does not run on SIGKILL, `Runtime.halt()` or a
+JVM crash, and a serverless runtime may freeze or kill the process without running it, so an
+explicit `flush()` is still required. The hook only runs once the JVM is already shutting down, so
+it never keeps the process alive. The hook holds a reference to its instance until `destroy()`
+removes it, so call `destroy()` on instances you stop using.
+
 `destroy()` stops the instance: buffered events are discarded unsent, in-flight requests are
 abandoned and later track calls do nothing.
 
@@ -196,8 +204,9 @@ The SDK is safe to use from multiple threads.
   queued, the oldest is 30 seconds old, or you call `flush()`. Call `flush()` before the process
   exits, or buffered events are lost.
 - **Send threads are daemon threads.** 1.x started a non-daemon thread per event, so the JVM
-  waited for every send. Now a send still in flight when `main` returns is killed with the JVM,
-  even in dev. Call `flush()` before exit.
+  waited for every send. 2.0 no longer holds the JVM open. On a normal exit or SIGTERM, a shutdown
+  hook flushes buffered and in-flight events for up to 10 seconds; on SIGKILL, `Runtime.halt()` or
+  a crash they are lost, even in dev. Call `flush()` before exit.
 - **The positional constructor validates its arguments.** It throws `IllegalArgumentException`
   when the API key or the app version is blank, or when the API key contains a CR, LF or NUL
   character.

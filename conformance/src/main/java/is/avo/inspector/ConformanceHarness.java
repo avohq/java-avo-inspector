@@ -36,7 +36,12 @@ public final class ConformanceHarness {
         stdout = new PrintStream(System.out, true);
         // Anything the SDK prints goes to stderr; stdout carries only the envelope.
         System.setOut(System.err);
-        System.exit(run());
+        int exitCode = run();
+        stdout.flush();
+        System.err.flush();
+        // halt, not exit: the SDK's exit-time flush hook would otherwise send what the steps left
+        // buffered, an implicit flush the runner contract forbids (wire-8 asserts zero requests).
+        Runtime.getRuntime().halt(exitCode);
     }
 
     private static int run() {
