@@ -188,24 +188,24 @@ abandoned and later track calls do nothing.
 
 The SDK is safe to use from multiple threads.
 
-# Upgrading from 1.1.1
+# Upgrading from 1.x to 2.0
 
-1.2.0 keeps every existing constructor and method, but these behaviours change:
+2.0.0 keeps every existing constructor and method, but these behaviours change:
 
 - **Events are buffered outside dev.** In staging and prod, events wait in memory until 30 are
   queued, the oldest is 30 seconds old, or you call `flush()`. Call `flush()` before the process
   exits, or buffered events are lost.
-- **Send threads are daemon threads.** 1.1.1 started a non-daemon thread per event, so the JVM
+- **Send threads are daemon threads.** 1.x started a non-daemon thread per event, so the JVM
   waited for every send. Now a send still in flight when `main` returns is killed with the JVM,
   even in dev. Call `flush()` before exit.
 - **The positional constructor validates its arguments.** It throws `IllegalArgumentException`
   when the API key or the app version is blank, or when the API key contains a CR, LF or NUL
   character.
-- **A `null` env falls back to dev** with a warning, where 1.1.1 threw a `NullPointerException`.
-- **List types on the wire use the first element's type.** 1.1.1 sent the union of element types,
-  e.g. `list<int|string>`. 1.2.0 sends `list(int)`, from the first element only, and lists the
+- **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
+- **List types on the wire use the first element's type.** 1.x sent the union of element types,
+  e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
   element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
-  `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.1.1 names.
+  `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.x names.
 - **Track methods never return an empty result because of the HTTP response.** They return the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
   non-200. The returned map now keeps the input's property order.
@@ -232,6 +232,9 @@ instead of fetching it into `.spec-repo/`. Requires Node.js.
 
 Update `AvoInspectorVersion.VERSION` together with `version` in `build.gradle` on every release;
 the build fails when they differ. The version is sent with every event as `libVersion`.
+
+Releases are published by JitPack from GitHub tags: tag the release commit with the plain version
+(e.g. `2.0.0`) and JitPack builds that tag.
 
 ## Author
 

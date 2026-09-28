@@ -9,7 +9,7 @@ package is.avo.inspector;
 public final class AvoInspectorVersion {
 
     /** The library version, sent as {@code libVersion} on every event (SPEC.md §7.3.3). */
-    public static final String VERSION = "1.2.0";
+    public static final String VERSION = "2.0.0";
 
     /** The version of avohq/spec-first-inspector-server-sdk this SDK implements. */
     public static final String SPEC_VERSION = "3.0.1";
