@@ -17,8 +17,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -67,8 +68,12 @@ class AvoBatcher {
         } else {
             timer = null;
         }
+        // Bounded so an outage cannot pile up batches without limit: room for one buffer's worth of
+        // batches, the oldest dropped first (at-most-once, like the maxQueueSize bound).
+        int queuedBatches = Math.max(1, (maxQueueSize + batchSize - 1) / batchSize);
         sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 60, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<Runnable>(), daemonThreads("avo-inspector-send"));
+                new ArrayBlockingQueue<Runnable>(queuedBatches), daemonThreads("avo-inspector-send"),
+                new DropOldestBatch());
         sendExecutor.allowCoreThreadTimeOut(true);
     }
 
@@ -226,6 +231,24 @@ class AvoBatcher {
             }
         }
         return submitted;
+    }
+
+    // Static, so the executor never keeps the batcher reachable.
+    private static final class DropOldestBatch implements RejectedExecutionHandler {
+        @Override
+        public void rejectedExecution(Runnable send, ThreadPoolExecutor executor) {
+            if (executor.isShutdown()) {
+                throw new RejectedExecutionException("destroyed");
+            }
+            Runnable oldest = executor.getQueue().poll();
+            if (oldest instanceof SendTask) {
+                ((SendTask) oldest).cancel(false);
+                if (AvoInspector.isLogging()) {
+                    System.err.println("Avo Inspector: send queue full; dropped " + ((SendTask) oldest).eventCount + " oldest event(s).");
+                }
+            }
+            executor.execute(send);
+        }
     }
 
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {

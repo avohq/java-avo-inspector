@@ -92,4 +92,37 @@ public class AvoBatcherTests {
         assertEquals(1, sent.size());
         tracker.join();
     }
+
+    @Test(timeout = 10_000)
+    public void sendQueueIsBoundedAndDropsTheOldestBatches() throws Exception {
+        final CountDownLatch release = new CountDownLatch(1);
+        AvoBatcher.Sender blocking = new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                sent.add(events);
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        };
+        // batchSize 1, maxQueueSize 2: at most ceil(2 / 1) = 2 batches wait behind the 4 senders.
+        AvoBatcher batcher = batcher(blocking, 1, 2, true);
+        for (int i = 1; i <= 10; i++) {
+            batcher.enqueue(event("E" + i));
+        }
+        release.countDown();
+        batcher.flush(5000);
+
+        List<String> names = new ArrayList<>();
+        synchronized (sent) {
+            for (List<Map<String, Object>> batch : sent) {
+                names.add((String) batch.get(0).get("eventName"));
+            }
+        }
+        Collections.sort(names);
+        assertEquals(java.util.Arrays.asList("E1", "E10", "E2", "E3", "E4", "E9"), names);
+    }
 }
