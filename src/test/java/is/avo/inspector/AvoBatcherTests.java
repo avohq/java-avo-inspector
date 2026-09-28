@@ -145,4 +145,18 @@ public class AvoBatcherTests {
         int timerThreads = threadsNamed("avo-inspector-flush-timer");
         assertTrue("timer threads: " + timerThreads, timerThreads <= 1);
     }
+
+    @Test
+    public void timerIsArmedOncePerBufferGeneration() {
+        // maxQueueSize 1: every enqueue drops the previous event, leaving one event buffered.
+        AvoBatcher batcher = batcher(recordingSender, 30, 1, false);
+        for (int i = 0; i < 5; i++) {
+            batcher.enqueue(event("E" + i));
+        }
+        assertEquals(1, batcher.timerArmsForTesting);
+
+        batcher.flush(1000);
+        batcher.enqueue(event("E5"));
+        assertEquals(2, batcher.timerArmsForTesting);
+    }
 }

@@ -62,6 +62,8 @@ class AvoBatcher {
     private final boolean timerEnabled;
     // Guarded by lock: the pending scheduled flush, cancelled on destroy().
     @Nullable private ScheduledFuture<?> pendingTimer;
+    // Guarded by lock. Test-only count of scheduled flushes.
+    int timerArmsForTesting;
     private final ThreadPoolExecutor sendExecutor;
     // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
     @Nullable volatile Runnable afterSwapForTesting;
@@ -147,7 +149,7 @@ class AvoBatcher {
             buffer.addLast(event);
             if (buffer.size() >= batchSize) {
                 sends = prepare(swap());
-            } else if (buffer.size() == 1 && timerEnabled) {
+            } else if (timerEnabled && pendingTimer == null) {
                 armTimer(generation);
             }
         }
@@ -237,18 +239,28 @@ class AvoBatcher {
         List<Map<String, Object>> batch = new ArrayList<>(buffer);
         buffer.clear();
         generation++;
+        // The pending flush was for the events just swapped out.
+        if (pendingTimer != null) {
+            pendingTimer.cancel(false);
+            pendingTimer = null;
+        }
         return batch;
     }
 
     // Caller holds lock. One-shot flush of this buffer generation once its oldest event is due.
     private void armTimer(final long armedGeneration) {
+        timerArmsForTesting++;
         try {
             pendingTimer = sharedTimer.schedule(new Runnable() {
                 @Override
                 public void run() {
                     List<SendTask> sends;
                     synchronized (lock) {
-                        if (destroyed || generation != armedGeneration || buffer.isEmpty()) {
+                        if (destroyed || generation != armedGeneration) {
+                            return;
+                        }
+                        pendingTimer = null;
+                        if (buffer.isEmpty()) {
                             return;
                         }
                         sends = prepare(swap());
