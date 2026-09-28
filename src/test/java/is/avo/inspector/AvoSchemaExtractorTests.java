@@ -2,8 +2,10 @@ package is.avo.inspector;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.Assume;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -275,17 +277,39 @@ public class AvoSchemaExtractorTests {
         assertEquals(1, inner.passes);
     }
 
+    // Measured in bytes allocated by this thread, not wall time: boxing and mapping a million
+    // elements allocates tens of MB, while the primitive path allocates a few objects.
     @Test
     public void primitiveArraysAreNotBoxedElementByElement() {
-        int[] large = new int[20_000_000];
+        com.sun.management.ThreadMXBean threads = allocationCounter();
+        long self = Thread.currentThread().getId();
+        int[] large = new int[1_000_000];
+        List<Integer> boxed = new ArrayList<>(large.length);
         for (int i = 0; i < large.length; i++) {
             large[i] = i;
+            boxed.add(i);
         }
-        long start = System.nanoTime();
+
+        long start = threads.getThreadAllocatedBytes(self);
         Map<String, AvoEventSchemaType> schema = extractor.extractSchema(props("v", large), false);
-        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        long primitiveBytes = threads.getThreadAllocatedBytes(self) - start;
         assertEquals("list(int)", schema.get("v").getReportedName());
-        assertTrue("took " + elapsedMs + " ms", elapsedMs < 250);
+        assertTrue("int[] extraction allocated " + primitiveBytes + " bytes", primitiveBytes < 1_000_000);
+
+        // Control: the same elements in a List are walked one by one, which the bound must catch.
+        start = threads.getThreadAllocatedBytes(self);
+        assertEquals("list(int)", extractor.extractSchema(props("v", boxed), false).get("v").getReportedName());
+        long walkedBytes = threads.getThreadAllocatedBytes(self) - start;
+        assertTrue("List<Integer> extraction allocated " + walkedBytes + " bytes", walkedBytes >= 1_000_000);
+    }
+
+    private static com.sun.management.ThreadMXBean allocationCounter() {
+        java.lang.management.ThreadMXBean bean = ManagementFactory.getThreadMXBean();
+        Assume.assumeTrue(bean instanceof com.sun.management.ThreadMXBean);
+        com.sun.management.ThreadMXBean threads = (com.sun.management.ThreadMXBean) bean;
+        Assume.assumeTrue(threads.isThreadAllocatedMemorySupported());
+        threads.setThreadAllocatedMemoryEnabled(true);
+        return threads;
     }
 
     // Depth rule shared with Node and C#: top-level properties are at depth 0, every descent into a
