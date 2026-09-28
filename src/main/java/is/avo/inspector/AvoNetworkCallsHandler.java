@@ -16,7 +16,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPOutputStream;
@@ -268,8 +267,6 @@ class AvoNetworkCallsHandler {
     }
 
     private static ScheduledExecutorService newWatchdog() {
-        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, AvoBatcher.daemonThreads("avo-inspector-request-watchdog"));
-        executor.setRemoveOnCancelPolicy(true);
-        return executor;
+        return AvoBatcher.newSharedScheduler("avo-inspector-request-watchdog");
     }
 }

@@ -50,6 +50,27 @@ public class ShutdownHookTests {
         }
     }
 
+    // Runs in a child JVM: uses and destroys instances, idles past the keep-alive, then reports.
+    public static final class UseDestroyAndIdle {
+        public static void main(String[] args) throws Exception {
+            for (AvoInspectorEnv env : new AvoInspectorEnv[]{AvoInspectorEnv.Dev, AvoInspectorEnv.Staging}) {
+                AvoInspector inspector = new AvoInspector("test-key", "1.0.0", "App", env);
+                inspector.networkCallsHandler.endpointForTesting = args[0];
+                inspector.trackSchemaFromEvent("E", Collections.<String, Object>singletonMap("a", 1));
+                inspector.flush();
+                inspector.destroy();
+            }
+            Thread.sleep(Long.parseLong(args[1]));
+            int threads = 0;
+            for (Thread thread : Thread.getAllStackTraces().keySet()) {
+                if (thread.getName().startsWith("avo-inspector")) {
+                    threads++;
+                }
+            }
+            System.out.println("threads=" + threads + " hook=" + AvoBatcher.isShutdownHookInstalledForTesting());
+        }
+    }
+
     private static List<String> childCommand(String... args) {
         List<String> command = new java.util.ArrayList<>(Arrays.asList(
                 System.getProperty("java.home") + File.separator + "bin" + File.separator + "java",
@@ -143,6 +164,24 @@ public class ShutdownHookTests {
         assertTrue(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));
         inspector.destroy();
         assertFalse(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));
+    }
+
+    @Test(timeout = 60_000)
+    public void anIdleJvmWithAllInstancesDestroyedHoldsNoThreadOrHook() throws Exception {
+        List<String> command = new java.util.ArrayList<>(Arrays.asList(
+                System.getProperty("java.home") + File.separator + "bin" + File.separator + "java",
+                "-cp", System.getProperty("java.class.path"),
+                UseDestroyAndIdle.class.getName(), server.url(), "7000"));
+        Process process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT).start();
+        java.io.BufferedReader stdout = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
+        String report = null;
+        for (String line = stdout.readLine(); line != null; line = stdout.readLine()) {
+            if (line.startsWith("threads=")) {
+                report = line;
+            }
+        }
+        assertTrue("child JVM did not exit", process.waitFor(30, TimeUnit.SECONDS));
+        assertEquals("threads=0 hook=false", report);
     }
 
     @Test(timeout = 60_000)

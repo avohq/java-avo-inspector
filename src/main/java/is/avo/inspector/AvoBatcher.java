@@ -44,6 +44,9 @@ class AvoBatcher {
     // holds the process open (SPEC.md §3.4).
     private static final Set<AvoBatcher> busyBatchers = Collections.newSetFromMap(new IdentityHashMap<AvoBatcher, Boolean>());
     private static boolean shutdownHookInstalled;
+    // Present only while some batcher has work, so an idle JVM (or a redeployed webapp) holds no
+    // hook, and through it no thread or class loader.
+    @Nullable private static Thread shutdownHook;
 
     private final Sender sender;
     private final int batchSize;
@@ -95,13 +98,15 @@ class AvoBatcher {
     private static void registerForShutdownFlush(AvoBatcher batcher) {
         synchronized (busyBatchers) {
             if (!shutdownHookInstalled) {
+                Thread hook = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        flushAllAtShutdown(AvoInspector.DEFAULT_FLUSH_TIMEOUT_MS);
+                    }
+                }, "avo-inspector-shutdown-flush");
                 try {
-                    Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            flushAllAtShutdown(AvoInspector.DEFAULT_FLUSH_TIMEOUT_MS);
-                        }
-                    }, "avo-inspector-shutdown-flush"));
+                    Runtime.getRuntime().addShutdownHook(hook);
+                    shutdownHook = hook;
                     shutdownHookInstalled = true;
                 } catch (IllegalStateException | SecurityException e) {
                     // Already shutting down, or hooks are not permitted: rely on explicit flush().
@@ -114,6 +119,21 @@ class AvoBatcher {
     private static void unregisterFromShutdownFlush(AvoBatcher batcher) {
         synchronized (busyBatchers) {
             busyBatchers.remove(batcher);
+            if (busyBatchers.isEmpty() && shutdownHookInstalled) {
+                try {
+                    Runtime.getRuntime().removeShutdownHook(shutdownHook);
+                    shutdownHook = null;
+                    shutdownHookInstalled = false;
+                } catch (IllegalStateException | SecurityException e) {
+                    // Shutdown in progress: the hook is already running.
+                }
+            }
+        }
+    }
+
+    static boolean isShutdownHookInstalledForTesting() {
+        synchronized (busyBatchers) {
+            return shutdownHookInstalled;
         }
     }
 
@@ -428,8 +448,16 @@ class AvoBatcher {
     }
 
     private static ScheduledThreadPoolExecutor newSharedTimer() {
-        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, daemonThreads("avo-inspector-flush-timer"));
+        return newSharedScheduler("avo-inspector-flush-timer");
+    }
+
+    // A shared single-thread scheduler whose thread exits after 5 idle seconds (it stays while a
+    // task is scheduled), so an idle JVM holds no Avo Inspector thread.
+    static ScheduledThreadPoolExecutor newSharedScheduler(String name) {
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, daemonThreads(name));
         executor.setRemoveOnCancelPolicy(true);
+        executor.setKeepAliveTime(5, TimeUnit.SECONDS);
+        executor.allowCoreThreadTimeOut(true);
         return executor;
     }
 
