@@ -7,11 +7,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,11 +37,12 @@ class AvoBatcher {
 
     private static final int SEND_THREADS = 4;
 
-    // Every live batcher, weakly held so an instance that is never destroyed can still be
-    // collected. One JVM shutdown hook flushes them all at exit (normal exit or SIGTERM; not
+    // Every batcher with buffered or in-flight events, held strongly so pending events are never
+    // lost to garbage collection; a batcher leaves once drained, so an idle instance stays
+    // collectable. One JVM shutdown hook flushes them all at exit (normal exit or SIGTERM; not
     // SIGKILL or Runtime.halt). It runs only once the JVM is already shutting down, so it never
     // holds the process open (SPEC.md §3.4).
-    private static final Set<AvoBatcher> liveBatchers = Collections.newSetFromMap(new WeakHashMap<AvoBatcher, Boolean>());
+    private static final Set<AvoBatcher> busyBatchers = Collections.newSetFromMap(new IdentityHashMap<AvoBatcher, Boolean>());
     private static boolean shutdownHookInstalled;
 
     private final Sender sender;
@@ -54,6 +55,8 @@ class AvoBatcher {
     private final ArrayDeque<Map<String, Object>> buffer = new ArrayDeque<>();
     private long generation;
     private boolean destroyed;
+    // Guarded by lock: whether this batcher is in busyBatchers.
+    private boolean registered;
 
     // One daemon timer thread for all instances, so an idle instance holds no timer thread.
     private static final ScheduledThreadPoolExecutor sharedTimer = newSharedTimer();
@@ -87,12 +90,10 @@ class AvoBatcher {
         sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 5, TimeUnit.SECONDS,
                 new SendQueue(), daemonThreads("avo-inspector-send"));
         sendExecutor.allowCoreThreadTimeOut(true);
-
-        registerForShutdownFlush(this);
     }
 
     private static void registerForShutdownFlush(AvoBatcher batcher) {
-        synchronized (liveBatchers) {
+        synchronized (busyBatchers) {
             if (!shutdownHookInstalled) {
                 try {
                     Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
@@ -106,21 +107,35 @@ class AvoBatcher {
                     // Already shutting down, or hooks are not permitted: rely on explicit flush().
                 }
             }
-            liveBatchers.add(batcher);
+            busyBatchers.add(batcher);
+        }
+    }
+
+    private static void unregisterFromShutdownFlush(AvoBatcher batcher) {
+        synchronized (busyBatchers) {
+            busyBatchers.remove(batcher);
         }
     }
 
     static boolean isRegisteredForShutdownFlush(AvoBatcher batcher) {
-        synchronized (liveBatchers) {
-            return liveBatchers.contains(batcher);
+        synchronized (busyBatchers) {
+            return busyBatchers.contains(batcher);
+        }
+    }
+
+    // Caller holds lock. Leaves the shutdown registry once nothing is buffered or in flight.
+    private void releaseIfDrained() {
+        if (registered && buffer.isEmpty() && inFlight.isEmpty()) {
+            registered = false;
+            unregisterFromShutdownFlush(this);
         }
     }
 
     // Sends every live batcher's buffer, then waits for all their sends, within one shared timeout.
     static void flushAllAtShutdown(long timeoutMs) {
         List<AvoBatcher> batchers;
-        synchronized (liveBatchers) {
-            batchers = new ArrayList<>(liveBatchers);
+        synchronized (busyBatchers) {
+            batchers = new ArrayList<>(busyBatchers);
         }
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         for (AvoBatcher batcher : batchers) {
@@ -147,6 +162,10 @@ class AvoBatcher {
                 dropped++;
             }
             buffer.addLast(event);
+            if (!registered) {
+                registered = true;
+                registerForShutdownFlush(this);
+            }
             if (buffer.size() >= batchSize) {
                 sends = prepare(swap());
             } else if (timerEnabled && pendingTimer == null) {
@@ -199,10 +218,11 @@ class AvoBatcher {
 
     /** Discards the buffer, stops the timer and abandons in-flight sends. */
     void destroy() {
-        synchronized (liveBatchers) {
-            liveBatchers.remove(this);
-        }
         synchronized (lock) {
+            if (registered) {
+                registered = false;
+                unregisterFromShutdownFlush(this);
+            }
             destroyed = true;
             buffer.clear();
             generation++;
@@ -390,6 +410,9 @@ class AvoBatcher {
         @Override
         protected void done() {
             inFlight.remove(this);
+            synchronized (lock) {
+                releaseIfDrained();
+            }
         }
     }
 

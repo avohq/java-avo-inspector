@@ -87,10 +87,7 @@ public class ShutdownHookTests {
         assertEquals(1, server.requests().size());
     }
 
-    @Test(timeout = 30_000)
-    public void anUndestroyedInstanceStaysGarbageCollectable() throws Exception {
-        java.lang.ref.WeakReference<AvoInspector> ref = new java.lang.ref.WeakReference<>(
-                new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging));
+    private static void awaitCollected(java.lang.ref.WeakReference<?> ref) throws InterruptedException {
         for (int i = 0; i < 100 && ref.get() != null; i++) {
             System.gc();
             byte[][] pressure = new byte[16][];
@@ -99,12 +96,50 @@ public class ShutdownHookTests {
             }
             Thread.sleep(20);
         }
-        assertTrue("the shutdown hook keeps the instance reachable", ref.get() == null);
+    }
+
+    @Test(timeout = 30_000)
+    public void anUndestroyedIdleInstanceStaysGarbageCollectable() throws Exception {
+        java.lang.ref.WeakReference<AvoInspector> ref = new java.lang.ref.WeakReference<>(
+                new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging));
+        awaitCollected(ref);
+        assertTrue("the shutdown flush keeps an idle instance reachable", ref.get() == null);
+    }
+
+    @Test(timeout = 30_000)
+    public void aDrainedInstanceStaysGarbageCollectable() throws Exception {
+        AvoInspector inspector = new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging);
+        inspector.networkCallsHandler.endpointForTesting = server.url();
+        inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        java.lang.ref.WeakReference<AvoBatcher> ref = new java.lang.ref.WeakReference<>(inspector.batcher);
+        inspector = null;
+        awaitCollected(ref);
+        assertTrue("a drained batcher is still registered", ref.get() == null);
+    }
+
+    @Test(timeout = 30_000)
+    public void bufferedEventsSurviveTheirInstanceBeingCollected() throws Exception {
+        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey("test-key").appVersion("1.0.0")
+                .env(AvoInspectorEnv.Staging).disableBatchTimer(true).build());
+        inspector.networkCallsHandler.endpointForTesting = server.url();
+        inspector.trackSchemaFromEvent("Orphaned", Collections.<String, Object>emptyMap());
+        java.lang.ref.WeakReference<AvoInspector> ref = new java.lang.ref.WeakReference<>(inspector);
+        inspector = null;
+        // Give the collector every chance: with pending events the instance must stay reachable.
+        awaitCollected(ref);
+
+        // What the JVM shutdown hook runs.
+        AvoBatcher.flushAllAtShutdown(5000);
+
+        assertEquals(1, server.requests().size());
+        assertEquals("Orphaned", server.requests().get(0).body.getJSONObject(0).getString("eventName"));
     }
 
     @Test
     public void destroyUnregistersFromTheShutdownFlush() {
         AvoInspector inspector = new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging);
+        inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap());
         assertTrue(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));
         inspector.destroy();
         assertFalse(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));

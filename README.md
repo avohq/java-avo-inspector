@@ -188,8 +188,10 @@ total. The hook runs when the JVM exits normally (for example when `main` return
 `System.exit` is called) or receives SIGTERM. It does not run on SIGKILL, `Runtime.halt()` or a
 JVM crash, and a serverless runtime may freeze or kill the process without running it, so an
 explicit `flush()` is still required. The hook only runs once the JVM is already shutting down, so
-it never keeps the process alive. Instances are tracked weakly, so an instance you drop without
-`destroy()` can still be garbage-collected (and is then no longer flushed).
+it never keeps the process alive. An instance with buffered or in-flight events is kept reachable
+until they are sent, so they are never lost to garbage collection; an idle instance can be
+garbage-collected without `destroy()`. With `disableBatchTimer(true)` and no `flush()`, an instance
+with buffered events therefore stays alive until the process exits.
 
 `destroy()` stops the instance: buffered events are discarded unsent, in-flight requests are
 abandoned and later track calls do nothing.
