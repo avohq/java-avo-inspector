@@ -183,8 +183,8 @@ public class NetworkTests {
     }
 
     @Test
-    public void successFalseDoesNotThrowOnTheCallerInDev() throws Exception {
-        // Main used getDouble("samplingRate") and rethrew the JSONException in dev.
+    public void successFalseLeavesTheRateSoLaterEventsStillSend() throws Exception {
+        // Main read getDouble("samplingRate") and threw on {"success":false}.
         server.respond(200, "{\"success\":false}");
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
 

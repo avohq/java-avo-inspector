@@ -3,12 +3,12 @@ plugins {
     id 'maven-publish'
 }
 
-group 'com.github.avohq'
-version '1.2.0'
+group = 'com.github.avohq'
+version = '1.2.0'
 
 repositories {
     mavenCentral()
-    maven { url 'https://jitpack.io' }
+    maven { url = 'https://jitpack.io' }
 }
 
 dependencies {
@@ -52,11 +52,12 @@ test {
 // with the published artifact version.
 tasks.register('verifyVersionConstant') {
     def versionFile = file('src/main/java/is/avo/inspector/AvoInspectorVersion.java')
+    def projectVersion = project.version.toString()
     inputs.file(versionFile)
     doLast {
         def matcher = versionFile.text =~ /String VERSION = "([^"]+)"/
-        if (!matcher.find() || matcher.group(1) != project.version.toString()) {
-            throw new GradleException("AvoInspectorVersion.VERSION must equal the project version ${project.version}")
+        if (!matcher.find() || matcher.group(1) != projectVersion) {
+            throw new GradleException("AvoInspectorVersion.VERSION must equal the project version ${projectVersion}")
         }
     }
 }
