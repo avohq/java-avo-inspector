@@ -245,8 +245,6 @@ public class AvoInspector implements Inspector {
             warn("streamId contains ':'; using the value verbatim.");
         }
 
-        logPostExtract(eventName, eventSchema);
-
         // SPEC.md §7.7: sample each event at enqueue; the body carries the rate that governed it.
         double samplingRate = networkCallsHandler.samplingRate;
         if (ThreadLocalRandom.current().nextDouble() > samplingRate) {
@@ -259,6 +257,8 @@ public class AvoInspector implements Inspector {
         Map<String, Object> event = networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema,
                 avoInspectorTarget, streamId, options, samplingRate);
 
+        // Logged before enqueue: the batcher may dispatch this event from within enqueue.
+        logPostExtract(eventName, eventSchema);
         return batcher.enqueue(event);
     }
 
@@ -275,7 +275,7 @@ public class AvoInspector implements Inspector {
             }
 
             if (eventName != null) {
-                System.out.println("Avo Inspector: Saved event " + eventName + " with schema {\n" + schemaString + "}");
+                System.out.println("Avo Inspector: Queued event " + eventName + " with schema {\n" + schemaString + "}");
             } else {
                 System.out.println("Avo Inspector: Parsed schema {\n" + schemaString + "}");
             }

@@ -133,6 +133,27 @@ public class LoggingTests {
     }
 
     @Test
+    public void queuedEventLogOnlyForEventsThatAreQueued() throws Exception {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Staging);
+        AvoInspector.enableLogging(true);
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true, "UTF-8"));
+        try {
+            inspector.setSamplingRateForTesting(0.0);
+            inspector.trackSchemaFromEvent("Dropped", Collections.<String, Object>emptyMap());
+            inspector.setSamplingRateForTesting(1.0);
+            inspector.trackSchemaFromEvent("Kept", Collections.<String, Object>emptyMap());
+        } finally {
+            System.setOut(originalOut);
+        }
+        String stdout = new String(out.toByteArray(), StandardCharsets.UTF_8);
+        assertTrue(stdout, stdout.contains("Avo Inspector: Queued event Kept"));
+        assertFalse(stdout, stdout.contains("event Dropped with schema"));
+        assertFalse(stdout, stdout.contains("Saved event"));
+    }
+
+    @Test
     public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
         server.delayResponses(1000);
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev);
