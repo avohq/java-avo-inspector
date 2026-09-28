@@ -232,10 +232,16 @@ The SDK is safe to use from multiple threads.
   `Avo Inspector: something went wrong. Please report to support@avo.app.`; in staging and prod it
   returns an empty map. In every env the error is now printed to stderr. `extractSchema` no
   longer throws in dev, and a `{"success":false}` response no longer throws on the send thread.
-- **Some messages always go to stderr**, whatever `enableLogging`: warnings (invalid env, a `:` in
-  a stream id, invalid batch options), failed sends and internal errors. Other logs still follow
-  the logging flag, which is on by default in dev. The dev log line "Saved event" is now
-  "Queued event".
+- **Some messages always go to stderr**, whatever `enableLogging`:
+  - a send that fails because of a network error, a timeout, or an API key the header check
+    refuses (`schema sending failed: Request failed.` / `Request timed out.`);
+  - internal errors (`Avo Inspector: something went wrong...`);
+  - warnings: invalid env, a `:` in a stream id, invalid batch options, and `batchSize` larger
+    than `maxQueueSize`.
+
+  Everything else follows the logging flag, which is on by default in dev. That includes non-200
+  responses, events dropped by `maxQueueSize` or a full send queue, and events dropped by
+  sampling. The dev log line "Saved event" is now "Queued event".
 - **New endpoint and wire body.** Events go to `https://api.avo.app/inspector/v2/track` with the
   API key in an `api-key` header. The body no longer has a `sessionStarted` element or a
   `sessionId` (or `avoFunction`) field, and each event carries a `streamId`.
