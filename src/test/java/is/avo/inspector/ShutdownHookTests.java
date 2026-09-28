@@ -157,6 +157,30 @@ public class ShutdownHookTests {
         assertEquals("Orphaned", server.requests().get(0).body.getJSONObject(0).getString("eventName"));
     }
 
+    @Test(timeout = 30_000)
+    public void backToBackSendsDoNotChurnTheShutdownHook() {
+        AvoInspector inspector = new AvoInspector("test-key", "1.0.0", "App", AvoInspectorEnv.Dev);
+        inspector.networkCallsHandler.endpointForTesting = server.url();
+        int adds;
+        int removals;
+        synchronized (AvoBatcher.class) {
+            adds = AvoBatcher.hookAddsForTesting;
+            removals = AvoBatcher.hookRemovalsForTesting;
+        }
+        // Each dev event registers and then drains the batcher.
+        for (int i = 0; i < 20; i++) {
+            inspector.trackSchemaFromEvent("E" + i, Collections.<String, Object>emptyMap());
+            inspector.flush();
+        }
+        assertTrue("hook adds: " + (AvoBatcher.hookAddsForTesting - adds), AvoBatcher.hookAddsForTesting - adds <= 1);
+        assertEquals(0, AvoBatcher.hookRemovalsForTesting - removals);
+
+        // destroy() with nothing left to flush removes it at once.
+        inspector.destroy();
+        assertFalse(AvoBatcher.isShutdownHookInstalledForTesting());
+        assertEquals(20, server.requests().size());
+    }
+
     @Test
     public void destroyUnregistersFromTheShutdownFlush() {
         AvoInspector inspector = new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging);

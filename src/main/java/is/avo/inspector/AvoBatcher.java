@@ -47,6 +47,13 @@ class AvoBatcher {
     // Present only while some batcher has work, so an idle JVM (or a redeployed webapp) holds no
     // hook, and through it no thread or class loader.
     @Nullable private static Thread shutdownHook;
+    // Guarded by busyBatchers: the pending check that removes the hook if the registry is still
+    // empty, so back-to-back sends (every event in dev) don't add and remove it each time.
+    @Nullable private static ScheduledFuture<?> hookRemovalCheck;
+    private static final long HOOK_REMOVAL_DELAY_MS = 5_000;
+    // Guarded by busyBatchers. Test-only counts of hook registrations and removals.
+    static int hookAddsForTesting;
+    static int hookRemovalsForTesting;
 
     private final Sender sender;
     private final int batchSize;
@@ -106,6 +113,7 @@ class AvoBatcher {
                 }, "avo-inspector-shutdown-flush");
                 try {
                     Runtime.getRuntime().addShutdownHook(hook);
+                    hookAddsForTesting++;
                     shutdownHook = hook;
                     shutdownHookInstalled = true;
                 } catch (IllegalStateException | SecurityException e) {
@@ -116,18 +124,50 @@ class AvoBatcher {
         }
     }
 
-    private static void unregisterFromShutdownFlush(AvoBatcher batcher) {
+    // immediately: remove the hook now if nothing is left (destroy()); otherwise only if the
+    // registry is still empty at a check shortly after, which absorbs back-to-back sends.
+    private static void unregisterFromShutdownFlush(AvoBatcher batcher, boolean immediately) {
         synchronized (busyBatchers) {
             busyBatchers.remove(batcher);
-            if (busyBatchers.isEmpty() && shutdownHookInstalled) {
+            if (!busyBatchers.isEmpty() || !shutdownHookInstalled) {
+                return;
+            }
+            if (immediately) {
+                removeShutdownHookIfIdle();
+            } else if (hookRemovalCheck == null) {
                 try {
-                    Runtime.getRuntime().removeShutdownHook(shutdownHook);
-                    shutdownHook = null;
-                    shutdownHookInstalled = false;
-                } catch (IllegalStateException | SecurityException e) {
-                    // Shutdown in progress: the hook is already running.
+                    hookRemovalCheck = sharedTimer.schedule(new Runnable() {
+                        @Override
+                        public void run() {
+                            synchronized (busyBatchers) {
+                                hookRemovalCheck = null;
+                                removeShutdownHookIfIdle();
+                            }
+                        }
+                    }, HOOK_REMOVAL_DELAY_MS, TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException e) {
+                    removeShutdownHookIfIdle();
                 }
             }
+        }
+    }
+
+    // Caller holds busyBatchers.
+    private static void removeShutdownHookIfIdle() {
+        if (hookRemovalCheck != null) {
+            hookRemovalCheck.cancel(false);
+            hookRemovalCheck = null;
+        }
+        if (!busyBatchers.isEmpty() || !shutdownHookInstalled) {
+            return;
+        }
+        try {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            hookRemovalsForTesting++;
+            shutdownHook = null;
+            shutdownHookInstalled = false;
+        } catch (IllegalStateException | SecurityException e) {
+            // Shutdown in progress: the hook is already running.
         }
     }
 
@@ -147,7 +187,7 @@ class AvoBatcher {
     private void releaseIfDrained() {
         if (registered && buffer.isEmpty() && inFlight.isEmpty()) {
             registered = false;
-            unregisterFromShutdownFlush(this);
+            unregisterFromShutdownFlush(this, false);
         }
     }
 
@@ -239,10 +279,8 @@ class AvoBatcher {
     /** Discards the buffer, stops the timer and abandons in-flight sends. */
     void destroy() {
         synchronized (lock) {
-            if (registered) {
-                registered = false;
-                unregisterFromShutdownFlush(this);
-            }
+            registered = false;
+            unregisterFromShutdownFlush(this, true);
             destroyed = true;
             buffer.clear();
             generation++;
