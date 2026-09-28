@@ -202,11 +202,10 @@ The SDK is safe to use from multiple threads.
   when the API key or the app version is blank, or when the API key contains a CR, LF or NUL
   character.
 - **A `null` env falls back to dev** with a warning, where 1.1.1 threw a `NullPointerException`.
-- **`AvoEventSchemaType` `toString()`, `equals()` and `hashCode()` changed.** They are based on the
-  spec type names, e.g. `list(int)["int"]` and `{"a": int}`, instead of the 1.1.1 names.
-- **List type names use the first element's type.** 1.1.1 reported the union of element types,
-  e.g. `list<int|string>`. 1.2.0 reports `list(int)`, from the first element only, and lists the
-  element types separately as children. An empty list is `list(string)`.
+- **List types on the wire use the first element's type.** 1.1.1 sent the union of element types,
+  e.g. `list<int|string>`. 1.2.0 sends `list(int)`, from the first element only, and lists the
+  element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
+  `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.1.1 names.
 - **Track methods never return an empty result because of the HTTP response.** They return the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
   non-200. The returned map now keeps the input's property order.

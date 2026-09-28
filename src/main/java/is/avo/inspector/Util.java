@@ -49,6 +49,35 @@ class Util {
         return properties;
     }
 
+    // The 1.1.1 property JSON behind AvoObject.legacyName(): HashMap property order and 1.1.1
+    // type names. Not the wire format.
+    static JSONArray legacyRemapProperties(Map<String, AvoEventSchemaType> originalProperties) {
+        Map<String, AvoEventSchemaType> hashOrdered = new HashMap<>();
+        for (Map.Entry<String, AvoEventSchemaType> property : originalProperties.entrySet()) {
+            hashOrdered.put(property.getKey(), property.getValue());
+        }
+
+        List<Map<String, Object>> properties = new ArrayList<>();
+        for (String propKey : hashOrdered.keySet()) {
+            AvoEventSchemaType propValue = hashOrdered.get(propKey);
+            if (propValue == null) {
+                continue;
+            }
+
+            Map<String, Object> prop = new HashMap<>();
+            prop.put("propertyName", propKey);
+            if (propValue instanceof AvoEventSchemaType.AvoObject) {
+                prop.put("propertyType", "object");
+                prop.put("children", legacyRemapProperties(((AvoEventSchemaType.AvoObject) propValue).children));
+            } else {
+                prop.put("propertyType", propValue.legacyName());
+            }
+            properties.add(prop);
+        }
+
+        return new JSONArray(properties);
+    }
+
     static String readableJsonProperties(Map<String, AvoEventSchemaType> originalProperties) {
         StringBuilder result = new StringBuilder("{");
 

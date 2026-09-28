@@ -4,8 +4,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @SuppressWarnings("WeakerAccess")
 public abstract class AvoEventSchemaType {
@@ -30,10 +32,19 @@ public abstract class AvoEventSchemaType {
         return getReportedName();
     }
 
+    /**
+     * The 1.1.1 name, e.g. {@code list<string|int>}, that {@link #toString()}, {@link #equals} and
+     * {@link #hashCode()} keep using. The wire never uses it.
+     */
+    @NotNull
+    String legacyName() {
+        return getReportedName();
+    }
+
     @Override
     public boolean equals(@Nullable Object obj) {
         if (obj instanceof AvoEventSchemaType) {
-            return getReadableName().equals(((AvoEventSchemaType) obj).getReadableName());
+            return legacyName().equals(((AvoEventSchemaType) obj).legacyName());
         }
 
         return super.equals(obj);
@@ -41,13 +52,13 @@ public abstract class AvoEventSchemaType {
 
     @Override
     public int hashCode() {
-        return getReadableName().hashCode();
+        return legacyName().hashCode();
     }
 
     @NotNull
     @Override
     public String toString() {
-        return getReadableName();
+        return legacyName();
     }
 
     public static class AvoInt extends AvoEventSchemaType {
@@ -127,6 +138,28 @@ public abstract class AvoEventSchemaType {
         protected String getReadableName() {
             return getReportedName() + childrenToWire();
         }
+
+        // The union of element types, in HashSet order, as 1.1.1 kept them.
+        @NotNull
+        @Override
+        String legacyName() {
+            Set<String> subtypes = new HashSet<>();
+            for (AvoEventSchemaType child : children) {
+                subtypes.add(child.legacyName());
+            }
+
+            StringBuilder types = new StringBuilder();
+            boolean first = true;
+            for (String subtype : subtypes) {
+                if (!first) {
+                    types.append("|");
+                }
+                types.append(subtype);
+                first = false;
+            }
+
+            return "list<" + types + ">";
+        }
     }
 
     public static class AvoObject extends AvoEventSchemaType {
@@ -153,6 +186,13 @@ public abstract class AvoEventSchemaType {
         @Override
         protected String getReadableName() {
             return Util.readableJsonProperties(children);
+        }
+
+        @NotNull
+        @Override
+        String legacyName() {
+            String jsonArrayString = Util.legacyRemapProperties(children).toString();
+            return jsonArrayString.substring(1, jsonArrayString.length() - 1);
         }
     }
 
