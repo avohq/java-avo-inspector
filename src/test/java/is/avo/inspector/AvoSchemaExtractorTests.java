@@ -288,6 +288,33 @@ public class AvoSchemaExtractorTests {
         assertTrue("took " + elapsedMs + " ms", elapsedMs < 250);
     }
 
+    // Depth rule shared with Node and C#: top-level properties are at depth 0, every descent into a
+    // property value or list element adds 1, and a complex value at depth 10 is cut.
+    @Test
+    public void nestedListsAreCutAtDepthTen() {
+        Object value = Collections.singletonList(1);
+        for (int i = 0; i < 10; i++) {
+            value = Collections.singletonList(value);
+        }
+        // Verbatim cross-SDK reference output (Node, Go, C#).
+        assertWire("[{\"propertyName\":\"a\",\"propertyType\":\"list(object)\",\"children\":[[[[[[[[[[\"object\"]]]]]]]]]]}]",
+                props("a", value));
+    }
+
+    @Test
+    public void alternatingListsAndObjectsAreCutAtDepthTen() {
+        // {"a":[{"b":[{"c":[{"d":[{"e":[{"f":[{"g":1}]}]}]}]}]}]}
+        Object fList = Collections.singletonList(props("g", 1));
+        Object eList = Collections.singletonList(props("f", fList));
+        Object dList = Collections.singletonList(props("e", eList));
+        Object cList = Collections.singletonList(props("d", dList));
+        Object bList = Collections.singletonList(props("c", cList));
+        Object a = Collections.singletonList(props("b", bList));
+        // Verbatim cross-SDK reference output (Node, Go, C#).
+        assertWire("[{\"propertyName\":\"a\",\"propertyType\":\"list(object)\",\"children\":[[{\"propertyName\":\"b\",\"propertyType\":\"list(object)\",\"children\":[[{\"propertyName\":\"c\",\"propertyType\":\"list(object)\",\"children\":[[{\"propertyName\":\"d\",\"propertyType\":\"list(object)\",\"children\":[[{\"propertyName\":\"e\",\"propertyType\":\"list(object)\",\"children\":[[{\"propertyName\":\"f\",\"propertyType\":\"object\",\"children\":[]}]]}]]}]]}]]}]]}]",
+                props("a", a));
+    }
+
     @Test
     public void extractSchemaNeverThrows() {
         Map<String, Object> cyclicList = new LinkedHashMap<>();
