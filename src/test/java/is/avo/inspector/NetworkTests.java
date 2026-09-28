@@ -141,6 +141,7 @@ public class NetworkTests {
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\0"));
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\u0007"));
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\u007f"));
+        assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\u0085"));
         assertEquals(0, server.requests().size());
     }
 

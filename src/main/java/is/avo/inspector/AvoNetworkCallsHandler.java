@@ -207,9 +207,9 @@ class AvoNetworkCallsHandler {
         }
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            // Any C0 control character except horizontal tab, and DEL: none is valid in an HTTP
-            // header value (RFC 9110 field-value), and CR, LF and NUL can split the request.
-            if ((c < 0x20 && c != '\t') || c == 0x7F) {
+            // Any Unicode control character (C0, DEL, C1) except horizontal tab. CR, LF and NUL can
+            // split the request; none of the others belongs in a header value either.
+            if (Character.isISOControl(c) && c != '\t') {
                 return true;
             }
         }

@@ -59,7 +59,7 @@ public class AvoInspectorTests {
     public void rejectsApiKeyWithControlCharacters() {
         String message = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
         for (String key : new String[]{"key\r", "ke\ny", "\0key", "key\r\nX-Injected: 1",
-                "key\u0001", "key\u000b", "key\u001b[31m", "key\u001f", "key\u007f"}) {
+                "key\u0001", "key\u000b", "key\u001b[31m", "key\u001f", "key\u007f", "key\u0080", "key\u0085", "key\u009f"}) {
             assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey(key).appVersion("1.0.0").build());
         }
     }
