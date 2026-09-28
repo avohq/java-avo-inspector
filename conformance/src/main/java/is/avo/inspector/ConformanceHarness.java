@@ -32,8 +32,9 @@ public final class ConformanceHarness {
 
     private static PrintStream stdout;
 
-    public static void main(String[] args) {
-        stdout = new PrintStream(System.out, true);
+    public static void main(String[] args) throws java.io.UnsupportedEncodingException {
+        // UTF-8 whatever the platform charset: the runner parses stdout as UTF-8 JSON.
+        stdout = new PrintStream(System.out, true, "UTF-8");
         // Anything the SDK prints goes to stderr; stdout carries only the envelope.
         System.setOut(System.err);
         int exitCode = run();

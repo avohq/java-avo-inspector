@@ -72,6 +72,13 @@ sourceSets {
     }
 }
 
+// HarnessTests runs the conformance harness in a child JVM.
+test {
+    dependsOn 'conformanceClasses'
+    inputs.files(sourceSets.conformance.output)
+    systemProperty 'avo.conformance.classpath', sourceSets.conformance.output.classesDirs.asPath
+}
+
 tasks.register('conformanceJar', Jar) {
     archiveFileName = 'avo-inspector-conformance.jar'
     destinationDirectory = layout.buildDirectory.dir('conformance')
