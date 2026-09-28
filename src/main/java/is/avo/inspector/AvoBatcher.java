@@ -18,9 +18,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -68,6 +67,10 @@ class AvoBatcher {
     // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
     @Nullable volatile Runnable afterSwapForTesting;
 
+    private final Object sendQueueLock = new Object();
+    // Guarded by sendQueueLock: events in sends waiting for a send thread.
+    private int queuedEvents;
+
     private final Set<Future<AvoNetworkCallsHandler.SendResult>> inFlight =
             Collections.newSetFromMap(new ConcurrentHashMap<Future<AvoNetworkCallsHandler.SendResult>, Boolean>());
 
@@ -79,13 +82,10 @@ class AvoBatcher {
 
         // Daemon threads: neither the timer nor a pending send holds the JVM open (SPEC.md §11.4).
         timerEnabled = !disableBatchTimer && batchSize > 1;
-        // Bounded so an outage cannot pile up batches without limit: room for one buffer's worth of
-        // batches, the oldest dropped first (at-most-once, like the maxQueueSize bound).
-        int queuedBatches = Math.max(1, (maxQueueSize + batchSize - 1) / batchSize);
-        // Send threads exit after 5 idle seconds, so an idle instance soon holds no thread.
+        // Send threads exit after 5 idle seconds, so an idle instance soon holds no thread. The
+        // queue itself is bounded by queued events in submit(), not by its capacity.
         sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 5, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<Runnable>(queuedBatches), daemonThreads("avo-inspector-send"),
-                new DropOldestBatch());
+                new LinkedBlockingQueue<Runnable>(), daemonThreads("avo-inspector-send"));
         sendExecutor.allowCoreThreadTimeOut(true);
 
         registerForShutdownFlush(this);
@@ -298,41 +298,48 @@ class AvoBatcher {
         return sends;
     }
 
-    // Outside the lock: the HTTP send runs on the send executor.
+    // Outside the lock: the HTTP send runs on the send executor. Sends waiting for a thread hold
+    // at most maxQueueSize events in total, so an outage cannot pile them up without limit; past
+    // that the oldest waiting sends are dropped (at-most-once, like the maxQueueSize bound). A
+    // flush split across several targets fits, because one flush never exceeds maxQueueSize.
     private List<Future<AvoNetworkCallsHandler.SendResult>> submit(List<SendTask> sends) {
         List<Future<AvoNetworkCallsHandler.SendResult>> submitted = new ArrayList<>(sends.size());
-        for (SendTask send : sends) {
-            try {
-                sendExecutor.execute(send);
-                submitted.add(send);
-            } catch (RejectedExecutionException e) {
-                // Destroyed concurrently: the batch is abandoned.
-                send.cancel(false);
+        int dropped = 0;
+        synchronized (sendQueueLock) {
+            for (SendTask send : sends) {
+                send.markQueued();
+                try {
+                    sendExecutor.execute(send);
+                    submitted.add(send);
+                } catch (RejectedExecutionException e) {
+                    // Destroyed concurrently: the batch is abandoned.
+                    send.unqueue();
+                    send.cancel(false);
+                }
             }
+            while (queuedEvents > maxQueueSize) {
+                Runnable oldest = sendExecutor.getQueue().poll();
+                if (oldest == null) {
+                    break;
+                }
+                SendTask oldestSend = (SendTask) oldest;
+                if (oldestSend.unqueue()) {
+                    dropped += oldestSend.eventCount;
+                }
+                oldestSend.cancel(false);
+            }
+        }
+        if (dropped > 0 && AvoInspector.isLogging()) {
+            System.err.println("Avo Inspector: send queue full; dropped " + dropped + " oldest event(s).");
         }
         return submitted;
     }
 
-    // Static, so the executor never keeps the batcher reachable.
-    private static final class DropOldestBatch implements RejectedExecutionHandler {
-        @Override
-        public void rejectedExecution(Runnable send, ThreadPoolExecutor executor) {
-            if (executor.isShutdown()) {
-                throw new RejectedExecutionException("destroyed");
-            }
-            Runnable oldest = executor.getQueue().poll();
-            if (oldest instanceof SendTask) {
-                ((SendTask) oldest).cancel(false);
-                if (AvoInspector.isLogging()) {
-                    System.err.println("Avo Inspector: send queue full; dropped " + ((SendTask) oldest).eventCount + " oldest event(s).");
-                }
-            }
-            executor.execute(send);
-        }
-    }
-
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
         final int eventCount;
+
+        // Guarded by sendQueueLock: counted in queuedEvents while waiting for a send thread.
+        private boolean queued;
 
         SendTask(final String apiKey, final List<Map<String, Object>> events) {
             super(new Callable<AvoNetworkCallsHandler.SendResult>() {
@@ -342,6 +349,30 @@ class AvoBatcher {
                 }
             });
             this.eventCount = events.size();
+        }
+
+        // Caller holds sendQueueLock.
+        void markQueued() {
+            queued = true;
+            queuedEvents += eventCount;
+        }
+
+        // Stops counting this send as waiting; false if it was not.
+        boolean unqueue() {
+            synchronized (sendQueueLock) {
+                if (!queued) {
+                    return false;
+                }
+                queued = false;
+                queuedEvents -= eventCount;
+                return true;
+            }
+        }
+
+        @Override
+        public void run() {
+            unqueue();
+            super.run();
         }
 
         @Override

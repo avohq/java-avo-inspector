@@ -159,4 +159,38 @@ public class AvoBatcherTests {
         batcher.enqueue(event("E5"));
         assertEquals(2, batcher.timerArmsForTesting);
     }
+
+    @Test(timeout = 10_000)
+    public void aFlushSpanningManyTargetsDropsNothingOnAHealthyNetwork() throws Exception {
+        final List<Integer> delivered = Collections.synchronizedList(new ArrayList<Integer>());
+        AvoBatcher.Sender slowButWorking = new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                delivered.add(events.size());
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        };
+        // 30 events over 6 targets: one flush becomes 6 requests, 5 events each.
+        AvoBatcher batcher = batcher(slowButWorking, 30, 30, true);
+        for (int i = 0; i < 30; i++) {
+            Map<String, Object> event = event("E" + i);
+            event.put("apiKey", "key-" + (i % 6));
+            batcher.enqueue(event);
+        }
+        batcher.flush(5000);
+
+        int total = 0;
+        synchronized (delivered) {
+            for (int size : delivered) {
+                total += size;
+            }
+        }
+        assertEquals(30, total);
+        assertEquals(6, delivered.size());
+    }
 }
