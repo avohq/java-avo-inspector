@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-// Schema extraction per SPEC.md §9. Property order follows the input's iteration order.
+/** Schema extraction per SPEC.md §9. Property order follows the input's iteration order. */
 public class AvoSchemaExtractor {
 
 	// SPEC.md §9.3.2: beyond this depth a nested value is reported as an empty object.

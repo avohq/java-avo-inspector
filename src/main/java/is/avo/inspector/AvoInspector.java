@@ -11,6 +11,10 @@ import java.util.concurrent.TimeUnit;
 
 import static is.avo.inspector.Util.handleException;
 
+/**
+ * Sends event schemas to Avo Inspector (SPEC.md §4). Outside dev, events are buffered and sent in
+ * batches; call {@link #flush()} before the process exits. Safe to use from multiple threads.
+ */
 public class AvoInspector implements Inspector {
 
     static final String NO_API_KEY_MESSAGE = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
@@ -382,11 +386,16 @@ public class AvoInspector implements Inspector {
         networkCallsHandler.samplingRate = samplingRate;
     }
 
+    /** Whether logging is on. The flag is process-wide: it applies to every instance. */
     @SuppressWarnings("WeakerAccess")
     static public boolean isLogging() {
         return logsEnabled;
     }
 
+    /**
+     * Turns logging on or off for every instance (SPEC.md §4.4). Each constructor also sets it: on
+     * in dev, off otherwise. Do not enable it in production.
+     */
     @SuppressWarnings("WeakerAccess")
     static public void enableLogging(boolean enabled) {
         logsEnabled = enabled;

@@ -22,6 +22,7 @@ public final class TrackOptions {
         this.originAppVersion = originAppVersion;
     }
 
+    /** Starts a {@link TrackOptions} with no values set. */
     @NotNull
     public static Builder builder() {
         return new Builder();
@@ -45,6 +46,7 @@ public final class TrackOptions {
         return originAppVersion;
     }
 
+    /** Builds a {@link TrackOptions}. Every value is optional. */
     public static final class Builder {
         @Nullable private String outputReference;
         @Nullable private String originHint;
@@ -53,24 +55,28 @@ public final class TrackOptions {
         private Builder() {
         }
 
+        /** Sets the reference of the gateway output the event was bound for. */
         @NotNull
         public Builder outputReference(@Nullable String outputReference) {
             this.outputReference = outputReference;
             return this;
         }
 
+        /** Sets the low-cardinality source label, e.g. "web"; never a user identifier. */
         @NotNull
         public Builder originHint(@Nullable String originHint) {
             this.originHint = originHint;
             return this;
         }
 
+        /** Sets the app version of the source that produced the event. */
         @NotNull
         public Builder originAppVersion(@Nullable String originAppVersion) {
             this.originAppVersion = originAppVersion;
             return this;
         }
 
+        /** Returns the options. */
         @NotNull
         public TrackOptions build() {
             return new TrackOptions(outputReference, originHint, originAppVersion);

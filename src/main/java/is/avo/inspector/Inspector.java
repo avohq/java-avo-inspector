@@ -7,23 +7,51 @@ import org.json.JSONObject;
 
 import java.util.Map;
 
+/** The Avo Inspector API; {@link AvoInspector} is the implementation. */
 @SuppressWarnings("UnusedReturnValue")
 public interface Inspector {
 
+    /**
+     * Extracts the schema of an event's properties and queues it for the Inspector backend.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for another Avo source.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for the Inspector backend.
+     * Property order follows the map's iteration order.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for another Avo source.
+     * Property order follows the map's iteration order.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
 
+    /** Queues an event schema you extracted yourself, e.g. with {@link #extractSchema(Object)}. */
     void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema);
 
+    /**
+     * Extracts the schema of an event's properties (SPEC.md §9) without sending anything.
+     * Never throws and makes no network calls.
+     */
     @NotNull
     Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties);
 

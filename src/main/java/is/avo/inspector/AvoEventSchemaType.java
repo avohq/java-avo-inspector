@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/** The type of one event property, as {@link AvoInspector#extractSchema(Object)} reports it. */
 @SuppressWarnings("WeakerAccess")
 public abstract class AvoEventSchemaType {
 
@@ -28,6 +29,7 @@ public abstract class AvoEventSchemaType {
         return getReportedName();
     }
 
+    /** The type as the dev log prints it: the wire type, with the children of objects and lists. */
     @NotNull protected String getReadableName() {
         return getReportedName();
     }
@@ -50,6 +52,7 @@ public abstract class AvoEventSchemaType {
         return getReportedName();
     }
 
+    /** Two types are equal when their 1.1.1 names are equal. */
     @Override
     public boolean equals(@Nullable Object obj) {
         if (obj instanceof AvoEventSchemaType) {
@@ -59,17 +62,20 @@ public abstract class AvoEventSchemaType {
         return super.equals(obj);
     }
 
+    /** The hash of the 1.1.1 name, consistent with {@link #equals}. */
     @Override
     public int hashCode() {
         return legacyName().hashCode();
     }
 
+    /** The 1.1.1 name, e.g. {@code list<string|int>}. */
     @NotNull
     @Override
     public String toString() {
         return legacyName();
     }
 
+    /** An integer value, e.g. {@code int}, {@code long} or {@code BigInteger}. */
     public static class AvoInt extends AvoEventSchemaType {
         @NotNull
         @Override
@@ -78,6 +84,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A floating-point value, e.g. {@code double} or {@code BigDecimal}. */
     public static class AvoFloat extends AvoEventSchemaType {
         @NotNull
         @Override
@@ -86,6 +93,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A boolean. */
     public static class AvoBoolean extends AvoEventSchemaType {
         @NotNull
         @Override
@@ -94,6 +102,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A string or a character. */
     public static class AvoString extends AvoEventSchemaType {
         @NotNull
         @Override
@@ -102,6 +111,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A {@code null} property value. */
     public static class AvoNull extends AvoEventSchemaType {
         @NotNull
         @Override
@@ -110,6 +120,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A list, array or {@code JSONArray}, with the types of its elements. */
     public static class AvoList extends AvoEventSchemaType {
         // Basic type of the first element, "string" for an empty list (SPEC.md §9.2).
         @NotNull final String elementType;
@@ -190,6 +201,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A map or {@code JSONObject}, with the types of its properties. */
     public static class AvoObject extends AvoEventSchemaType {
 
         @NotNull Map<String, AvoEventSchemaType> children;
@@ -239,6 +251,7 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    /** A value whose type is not recognised. */
     public static class AvoUnknownType extends AvoEventSchemaType {
 
         @NotNull

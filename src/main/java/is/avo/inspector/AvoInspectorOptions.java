@@ -34,11 +34,13 @@ public final class AvoInspectorOptions {
         this.disableBatchTimer = builder.disableBatchTimer;
     }
 
+    /** Starts an {@link AvoInspectorOptions} with no values set. */
     @NotNull
     public static Builder builder() {
         return new Builder();
     }
 
+    /** Builds an {@link AvoInspectorOptions}. */
     public static final class Builder {
         @Nullable private String apiKey;
         @Nullable private AvoInspectorEnv env;
@@ -118,6 +120,7 @@ public final class AvoInspectorOptions {
             return this;
         }
 
+        /** Returns the options; the {@link AvoInspector} constructor validates them. */
         @NotNull
         public AvoInspectorOptions build() {
             return new AvoInspectorOptions(this);
