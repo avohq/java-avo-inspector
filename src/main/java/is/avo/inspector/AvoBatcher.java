@@ -85,7 +85,7 @@ class AvoBatcher {
         // Send threads exit after 5 idle seconds, so an idle instance soon holds no thread. The
         // queue itself is bounded by queued events in submit(), not by its capacity.
         sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 5, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<Runnable>(), daemonThreads("avo-inspector-send"));
+                new SendQueue(), daemonThreads("avo-inspector-send"));
         sendExecutor.allowCoreThreadTimeOut(true);
 
         registerForShutdownFlush(this);
@@ -307,7 +307,6 @@ class AvoBatcher {
         int dropped = 0;
         synchronized (sendQueueLock) {
             for (SendTask send : sends) {
-                send.markQueued();
                 try {
                     sendExecutor.execute(send);
                     submitted.add(send);
@@ -335,6 +334,18 @@ class AvoBatcher {
         return submitted;
     }
 
+    // Counts a send as waiting only when it really enters the queue: execute() hands the first
+    // sends straight to new threads without queuing them.
+    private static final class SendQueue extends LinkedBlockingQueue<Runnable> {
+        @Override
+        public boolean offer(Runnable send) {
+            if (send instanceof SendTask) {
+                ((SendTask) send).markQueued();
+            }
+            return super.offer(send);
+        }
+    }
+
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
         final int eventCount;
 
@@ -351,10 +362,11 @@ class AvoBatcher {
             this.eventCount = events.size();
         }
 
-        // Caller holds sendQueueLock.
         void markQueued() {
-            queued = true;
-            queuedEvents += eventCount;
+            synchronized (sendQueueLock) {
+                queued = true;
+                queuedEvents += eventCount;
+            }
         }
 
         // Stops counting this send as waiting; false if it was not.
