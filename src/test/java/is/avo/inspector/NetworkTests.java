@@ -146,19 +146,6 @@ public class NetworkTests {
     }
 
     @Test
-    public void overrideTargetWithControlCharacterIsDroppedNotRewritten() throws Exception {
-        AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
-        Map<String, Object> props = Collections.<String, Object>singletonMap("a", 1);
-
-        Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEvent("Event", props,
-                new AvoInspectorTarget("bad\rkey", "Other", "2.0.0"));
-        inspector.flush();
-
-        assertEquals(1, schema.size());
-        assertEquals(0, server.requests().size());
-    }
-
-    @Test
     public void samplingRateOnlyChangesOnA200WithAValidRate() throws Exception {
         AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
         handler.endpointForTesting = server.url();

@@ -85,6 +85,28 @@ public class AvoInspectorTests {
         assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey(" \r\n ").appVersion("1.0.0").build());
     }
 
+    private static void assertTargetThrows(String expectedMessage, String apiKey, String appName) {
+        try {
+            new AvoInspectorTarget(apiKey, appName, "1.0.0");
+            fail("expected the AvoInspectorTarget constructor to throw");
+        } catch (IllegalArgumentException e) {
+            assertEquals(expectedMessage, e.getMessage());
+        }
+    }
+
+    @Test
+    public void inspectorTargetValidatesLikeTheConstructor() {
+        String noKey = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
+        String control = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
+        assertTargetThrows(noKey, null, "App");
+        assertTargetThrows(noKey, " \u00a0", "App");
+        assertTargetThrows(control, "bad\rkey", "App");
+        assertTargetThrows(control, "\0", "App");
+        assertTargetThrows("[Avo Inspector] No app name provided. AvoInspectorTarget requires an app name; use \"\" for none.", "key", null);
+
+        new AvoInspectorTarget("key\twith-tab", "", "1.0.0");
+    }
+
     @Test
     public void rejectsMissingOrBlankVersion() {
         String message = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
