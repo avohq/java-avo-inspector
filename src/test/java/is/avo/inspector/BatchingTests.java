@@ -154,6 +154,19 @@ public class BatchingTests {
         assertEquals(1, inspector.batcher.pendingCount());
     }
 
+    @Test(timeout = 15_000)
+    public void negativeFlushTimeoutMeansTheDefault() throws Exception {
+        // As in Node and Go: a negative timeout is the 10 s default, not "don't wait".
+        server.delayResponses(1000);
+        AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
+        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+
+        inspector.flush(-1);
+
+        assertEquals(0, inspector.batcher.pendingCount());
+        assertEquals(1, server.requests().size());
+    }
+
     @Test
     public void maxQueueSizeDropsTheOldestEvents() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging).maxQueueSize(2));

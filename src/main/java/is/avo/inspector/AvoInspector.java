@@ -303,11 +303,12 @@ public class AvoInspector implements Inspector {
 
     /**
      * Sends every buffered event and waits up to {@code timeoutMs} for all in-flight sends to
-     * complete. Never throws; the instance stays usable afterwards.
+     * complete. A negative timeout means the 10 second default. Never throws; the instance stays
+     * usable afterwards.
      */
     public void flush(long timeoutMs) {
         try {
-            batcher.flush(timeoutMs);
+            batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
         } catch (Throwable e) {
             System.err.println(Util.INTERNAL_ERROR_MESSAGE + " " + e);
         }
