@@ -188,6 +188,41 @@ abandoned and later track calls do nothing.
 
 The SDK is safe to use from multiple threads.
 
+# Upgrading from 1.1.1
+
+1.2.0 keeps every existing constructor and method, but these behaviours change:
+
+- **Events are buffered outside dev.** In staging and prod, events wait in memory until 30 are
+  queued, the oldest is 30 seconds old, or you call `flush()`. Call `flush()` before the process
+  exits, or buffered events are lost.
+- **Send threads are daemon threads.** 1.1.1 started a non-daemon thread per event, so the JVM
+  waited for every send. Now a send still in flight when `main` returns is killed with the JVM,
+  even in dev. Call `flush()` before exit.
+- **The positional constructor validates its arguments.** It throws `IllegalArgumentException`
+  when the API key or the app version is blank, or when the API key contains a CR, LF or NUL
+  character.
+- **A `null` env falls back to dev** with a warning, where 1.1.1 threw a `NullPointerException`.
+- **`AvoEventSchemaType` `toString()`, `equals()` and `hashCode()` changed.** They are based on the
+  spec type names, e.g. `list(int)["int"]` and `{"a": int}`, instead of the 1.1.1 names.
+- **List type names use the first element's type.** 1.1.1 reported the union of element types,
+  e.g. `list<int|string>`. 1.2.0 reports `list(int)`, from the first element only, and lists the
+  element types separately as children. An empty list is `list(string)`.
+- **Track methods never return an empty result because of the HTTP response.** They return the
+  extracted schema as soon as the event is queued, whatever the server later answers, including a
+  non-200. The returned map now keeps the input's property order.
+- **Internal errors throw in dev and are swallowed in staging and prod.** In dev a track call
+  throws a `RuntimeException` with the message
+  `Avo Inspector: something went wrong. Please report to support@avo.app.`; in staging and prod it
+  returns an empty map. In every env the error is now printed to stderr. `extractSchema` no
+  longer throws in dev, and a `{"success":false}` response no longer throws on the send thread.
+- **Some messages always go to stderr**, whatever `enableLogging`: warnings (invalid env, a `:` in
+  a stream id, invalid batch options), failed sends and internal errors. Other logs still follow
+  the logging flag, which is on by default in dev. The dev log line "Saved event" is now
+  "Queued event".
+- **New endpoint and wire body.** Events go to `https://api.avo.app/inspector/v2/track` with the
+  API key in an `api-key` header. The body no longer has a `sessionStarted` element or a
+  `sessionId` (or `avoFunction`) field, and each event carries a `streamId`.
+
 # Conformance
 
 `./scripts/run-conformance.sh` builds the conformance harness (runner contract 1.1.0) and runs the
