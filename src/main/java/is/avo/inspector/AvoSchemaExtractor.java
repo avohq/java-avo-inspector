@@ -102,17 +102,10 @@ public class AvoSchemaExtractor {
 			return new AvoEventSchemaType.AvoTruncatedObject();
 		}
 
-		List<Object> elements = listElements(val);
-		if (elements != null) {
-			Object first = elements.isEmpty() ? null : elements.get(0);
-			String elementType = isNull(first) ? "string" : basicType(first);
-			// "list(unknown)" is not a wire type (SPEC.md §7.3.4): an unrecognised element is an object.
-			if ("unknown".equals(elementType)) {
-				elementType = "object";
-			}
+		if (isList(val)) {
 			ancestors.add(val);
 			try {
-				return new AvoEventSchemaType.AvoList(elementType, mapList(elements, depth + 1, ancestors));
+				return mapList(val, depth + 1, ancestors);
 			} finally {
 				ancestors.remove(val);
 			}
@@ -130,24 +123,57 @@ public class AvoSchemaExtractor {
 		return scalarType(val);
 	}
 
-	// The array branch of mapping(): each element mapped, primitive types deduplicated by value.
-	// Objects and nested lists are never merged (reference identity in the JS reference parser).
-	private List<AvoEventSchemaType> mapList(@NotNull List<Object> elements, int depth, Set<Object> ancestors) {
-		List<AvoEventSchemaType> result = new ArrayList<>();
+	// The array branch of mapping(), in one pass over the elements: the list type comes from the
+	// first element, each element is mapped, primitive types are deduplicated by value. Objects and
+	// nested lists are never merged (reference identity in the JS reference parser).
+	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Set<Object> ancestors) {
+		Class<?> component = list.getClass().getComponentType();
+		if (component != null && component.isPrimitive()) {
+			// Every element has the component's type, so there is nothing to walk or box.
+			if (Array.getLength(list) == 0) {
+				return new AvoEventSchemaType.AvoList("string", new ArrayList<AvoEventSchemaType>());
+			}
+			AvoEventSchemaType type = primitiveType(component);
+			List<AvoEventSchemaType> children = new ArrayList<>(1);
+			children.add(type);
+			return new AvoEventSchemaType.AvoList(type.getReportedName(), children);
+		}
+
+		Iterable<?> elements = list instanceof Object[] ? Arrays.asList((Object[]) list) : (Iterable<?>) list;
+		String elementType = "string";
+		boolean first = true;
+		List<AvoEventSchemaType> children = new ArrayList<>();
 		Set<String> seenPrimitives = new HashSet<>();
 
 		for (Object element : elements) {
+			if (first) {
+				elementType = isNull(element) ? "string" : basicType(element);
+				first = false;
+			}
 			AvoEventSchemaType mapped = objectToAvoType(element, depth, ancestors);
 			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
 					|| mapped instanceof AvoEventSchemaType.AvoList;
-			if (nonPrimitive) {
-				result.add(mapped);
-			} else if (seenPrimitives.add(mapped.getReportedName())) {
-				result.add(mapped);
+			if (nonPrimitive || seenPrimitives.add(mapped.getReportedName())) {
+				children.add(mapped);
 			}
 		}
 
-		return result;
+		// "list(unknown)" is not a wire type (SPEC.md §7.3.4): an unrecognised element is an object.
+		if ("unknown".equals(elementType)) {
+			elementType = "object";
+		}
+		return new AvoEventSchemaType.AvoList(elementType, children);
+	}
+
+	private static AvoEventSchemaType primitiveType(Class<?> primitive) {
+		if (primitive == boolean.class) {
+			return new AvoEventSchemaType.AvoBoolean();
+		} else if (primitive == float.class || primitive == double.class) {
+			return new AvoEventSchemaType.AvoFloat();
+		} else if (primitive == char.class) {
+			return new AvoEventSchemaType.AvoString();
+		}
+		return new AvoEventSchemaType.AvoInt();
 	}
 
 	private static Set<Object> newAncestors(Object root) {
@@ -189,29 +215,11 @@ public class AvoSchemaExtractor {
 		return val instanceof Map || val instanceof JSONObject;
 	}
 
-	private static boolean isComplex(@Nullable Object val) {
-		return isObject(val) || listElements(val) != null;
+	private static boolean isList(@Nullable Object val) {
+		return val instanceof Collection || val instanceof JSONArray || (val != null && val.getClass().isArray());
 	}
 
-	@Nullable
-	private static List<Object> listElements(@Nullable Object val) {
-		if (val instanceof Collection) {
-			return new ArrayList<Object>((Collection<?>) val);
-		} else if (val instanceof JSONArray) {
-			JSONArray jsonArray = (JSONArray) val;
-			List<Object> result = new ArrayList<>(jsonArray.length());
-			for (int i = 0; i < jsonArray.length(); i++) {
-				result.add(jsonArray.opt(i));
-			}
-			return result;
-		} else if (val != null && val.getClass().isArray()) {
-			int length = Array.getLength(val);
-			List<Object> result = new ArrayList<>(length);
-			for (int i = 0; i < length; i++) {
-				result.add(Array.get(val, i));
-			}
-			return result;
-		}
-		return null;
+	private static boolean isComplex(@Nullable Object val) {
+		return isObject(val) || isList(val);
 	}
 }

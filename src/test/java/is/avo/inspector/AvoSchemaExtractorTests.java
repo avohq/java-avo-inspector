@@ -233,6 +233,61 @@ public class AvoSchemaExtractorTests {
         assertWire("[{propertyName:l,propertyType:'list(object)',children:[object]}]", parent);
     }
 
+    // Counts every pass over its elements (iterator() and toArray() both walk them).
+    static final class CountingList<E> extends java.util.AbstractCollection<E> {
+        final List<E> elements;
+        int passes;
+
+        CountingList(List<E> elements) {
+            this.elements = elements;
+        }
+
+        @Override
+        public java.util.Iterator<E> iterator() {
+            passes++;
+            return elements.iterator();
+        }
+
+        @Override
+        public Object[] toArray() {
+            passes++;
+            return elements.toArray();
+        }
+
+        @Override
+        public <T> T[] toArray(T[] a) {
+            passes++;
+            return elements.toArray(a);
+        }
+
+        @Override
+        public int size() {
+            return elements.size();
+        }
+    }
+
+    @Test
+    public void eachListIsWalkedOnce() {
+        CountingList<Object> inner = new CountingList<Object>(Arrays.<Object>asList(1, 2));
+        CountingList<Object> outer = new CountingList<Object>(Arrays.<Object>asList(inner, "a"));
+        assertWire("[{propertyName:v,propertyType:'list(object)',children:[[int],string]}]", props("v", outer));
+        assertEquals(1, outer.passes);
+        assertEquals(1, inner.passes);
+    }
+
+    @Test
+    public void primitiveArraysAreNotBoxedElementByElement() {
+        int[] large = new int[20_000_000];
+        for (int i = 0; i < large.length; i++) {
+            large[i] = i;
+        }
+        long start = System.nanoTime();
+        Map<String, AvoEventSchemaType> schema = extractor.extractSchema(props("v", large), false);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        assertEquals("list(int)", schema.get("v").getReportedName());
+        assertTrue("took " + elapsedMs + " ms", elapsedMs < 250);
+    }
+
     @Test
     public void extractSchemaNeverThrows() {
         Map<String, Object> cyclicList = new LinkedHashMap<>();
