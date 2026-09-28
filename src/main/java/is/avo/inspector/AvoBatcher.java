@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +36,13 @@ class AvoBatcher {
     }
 
     private static final int SEND_THREADS = 4;
+
+    // Every live batcher, weakly held so an instance that is never destroyed can still be
+    // collected. One JVM shutdown hook flushes them all at exit (normal exit or SIGTERM; not
+    // SIGKILL or Runtime.halt). It runs only once the JVM is already shutting down, so it never
+    // holds the process open (SPEC.md §3.4).
+    private static final Set<AvoBatcher> liveBatchers = Collections.newSetFromMap(new WeakHashMap<AvoBatcher, Boolean>());
+    private static boolean shutdownHookInstalled;
 
     private final Sender sender;
     private final int batchSize;
@@ -75,6 +83,48 @@ class AvoBatcher {
                 new ArrayBlockingQueue<Runnable>(queuedBatches), daemonThreads("avo-inspector-send"),
                 new DropOldestBatch());
         sendExecutor.allowCoreThreadTimeOut(true);
+
+        registerForShutdownFlush(this);
+    }
+
+    private static void registerForShutdownFlush(AvoBatcher batcher) {
+        synchronized (liveBatchers) {
+            if (!shutdownHookInstalled) {
+                try {
+                    Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            flushAllAtShutdown(AvoInspector.DEFAULT_FLUSH_TIMEOUT_MS);
+                        }
+                    }, "avo-inspector-shutdown-flush"));
+                    shutdownHookInstalled = true;
+                } catch (IllegalStateException | SecurityException e) {
+                    // Already shutting down, or hooks are not permitted: rely on explicit flush().
+                }
+            }
+            liveBatchers.add(batcher);
+        }
+    }
+
+    static boolean isRegisteredForShutdownFlush(AvoBatcher batcher) {
+        synchronized (liveBatchers) {
+            return liveBatchers.contains(batcher);
+        }
+    }
+
+    // Sends every live batcher's buffer, then waits for all their sends, within one shared timeout.
+    static void flushAllAtShutdown(long timeoutMs) {
+        List<AvoBatcher> batchers;
+        synchronized (liveBatchers) {
+            batchers = new ArrayList<>(liveBatchers);
+        }
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        for (AvoBatcher batcher : batchers) {
+            batcher.sendBuffered();
+        }
+        for (AvoBatcher batcher : batchers) {
+            batcher.awaitInFlight(deadline);
+        }
     }
 
     /**
@@ -112,18 +162,28 @@ class AvoBatcher {
 
     /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
     void flush(long timeoutMs) {
+        if (!sendBuffered()) {
+            return;
+        }
+        awaitInFlight(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs)));
+    }
+
+    // Returns false once destroyed.
+    private boolean sendBuffered() {
         List<SendTask> sends;
         synchronized (lock) {
             if (destroyed) {
-                return;
+                return false;
             }
             sends = buffer.isEmpty() ? null : prepare(swap());
         }
         if (sends != null) {
             submit(sends);
         }
+        return true;
+    }
 
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs));
+    private void awaitInFlight(long deadline) {
         for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) {
@@ -135,6 +195,9 @@ class AvoBatcher {
 
     /** Discards the buffer, stops the timer and abandons in-flight sends. */
     void destroy() {
+        synchronized (liveBatchers) {
+            liveBatchers.remove(this);
+        }
         synchronized (lock) {
             destroyed = true;
             buffer.clear();

@@ -42,10 +42,6 @@ public class AvoInspector implements Inspector {
 
     private volatile boolean destroyed = false;
 
-    // Flushes at JVM exit (normal exit or SIGTERM; not SIGKILL or Runtime.halt). It runs only once
-    // the JVM is already shutting down, so it never holds the process open (SPEC.md §3.4).
-    final Thread shutdownFlush;
-
     /**
      * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
      *                                  {@code apiKey} contains CR, LF or NUL
@@ -118,19 +114,6 @@ public class AvoInspector implements Inspector {
                 return handler.send(events, apiKey);
             }
         }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer);
-
-        final AvoBatcher shutdownBatcher = this.batcher;
-        this.shutdownFlush = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                shutdownBatcher.flush(DEFAULT_FLUSH_TIMEOUT_MS);
-            }
-        }, "avo-inspector-shutdown-flush");
-        try {
-            Runtime.getRuntime().addShutdownHook(shutdownFlush);
-        } catch (IllegalStateException | SecurityException e) {
-            // Constructed during shutdown, or hooks are not permitted: rely on explicit flush().
-        }
 
         enableLogging(resolvedEnv == AvoInspectorEnv.Dev);
     }
@@ -338,11 +321,6 @@ public class AvoInspector implements Inspector {
      */
     public void destroy() {
         destroyed = true;
-        try {
-            Runtime.getRuntime().removeShutdownHook(shutdownFlush);
-        } catch (IllegalStateException | SecurityException e) {
-            // Shutdown already in progress: the hook runs, but finds the batcher destroyed.
-        }
         batcher.destroy();
         networkCallsHandler.abortAll();
     }
