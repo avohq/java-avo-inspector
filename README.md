@@ -244,7 +244,9 @@ The SDK is safe to use from multiple threads.
   sampling. The dev log line "Saved event" is now "Queued event".
 - **New endpoint and wire body.** Events go to `https://api.avo.app/inspector/v2/track` with the
   API key in an `api-key` header. The body no longer has a `sessionStarted` element or a
-  `sessionId` (or `avoFunction`) field, and each event carries a `streamId`.
+  `sessionId` (or `avoFunction`) field, and each event carries a `streamId`. `sessionId` is not
+  sent; ingestion treats it as optional since monorepo #10017 (Sep 2026), the same wire shape as
+  the C# SDK 1.1.0.
 
 # Conformance
 
