@@ -95,7 +95,7 @@ public class AvoSchemaExtractor {
 	// The type of one property value, descending into objects and lists.
 	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth) {
 		if (isComplex(val) && depth >= MAX_DEPTH) {
-			return new AvoEventSchemaType.AvoObject(new LinkedHashMap<String, AvoEventSchemaType>());
+			return new AvoEventSchemaType.AvoTruncatedObject();
 		}
 
 		List<Object> elements = listElements(val);
@@ -124,7 +124,9 @@ public class AvoSchemaExtractor {
 
 		for (Object element : elements) {
 			AvoEventSchemaType mapped = objectToAvoType(element, depth);
-			if (mapped instanceof AvoEventSchemaType.AvoObject || mapped instanceof AvoEventSchemaType.AvoList) {
+			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
+					|| mapped instanceof AvoEventSchemaType.AvoList;
+			if (nonPrimitive) {
 				result.add(mapped);
 			} else if (seenPrimitives.add(mapped.getReportedName())) {
 				result.add(mapped);

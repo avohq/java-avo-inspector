@@ -156,6 +156,21 @@ public abstract class AvoEventSchemaType {
         }
     }
 
+    // A value past the depth cap (SPEC.md §9.3.2): an object with no children as a property, the
+    // type string "object" as a list element.
+    static final class AvoTruncatedObject extends AvoObject {
+
+        AvoTruncatedObject() {
+            super(new java.util.LinkedHashMap<String, AvoEventSchemaType>());
+        }
+
+        @NotNull
+        @Override
+        Object toListChild() {
+            return getReportedName();
+        }
+    }
+
     public static class AvoUnknownType extends AvoEventSchemaType {
 
         @NotNull

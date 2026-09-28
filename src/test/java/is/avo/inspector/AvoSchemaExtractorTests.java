@@ -182,6 +182,27 @@ public class AvoSchemaExtractorTests {
     }
 
     @Test
+    public void listElementAtTheDepthCapIsTheTypeObject() {
+        // SPEC.md §9.3.2, as in Go and C#: a list leaf past the cap is "object", not [].
+        List<Object> cyclic = new ArrayList<>();
+        cyclic.add(cyclic);
+        JSONArray wire = Util.remapProperties(extractor.extractSchema(props("v", cyclic), false));
+
+        JSONObject entry = wire.getJSONObject(0);
+        assertEquals("list(object)", entry.getString("propertyType"));
+        Object child = entry.getJSONArray("children");
+        int depth = 0;
+        while (child instanceof JSONArray) {
+            JSONArray children = (JSONArray) child;
+            assertEquals(1, children.length());
+            child = children.get(0);
+            depth++;
+        }
+        assertEquals("object", child);
+        assertEquals(10, depth);
+    }
+
+    @Test
     public void extractSchemaNeverThrows() {
         Map<String, Object> cyclicList = new LinkedHashMap<>();
         List<Object> list = new ArrayList<>();
