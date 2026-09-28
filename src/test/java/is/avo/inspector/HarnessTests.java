@@ -63,4 +63,35 @@ public class HarnessTests {
         assertEquals("bad-step", envelope.getString("fixture_id"));
         assertEquals("sequence step is not an object", envelope.getString("error"));
     }
+
+    @Test(timeout = 60_000)
+    public void aConstructorFieldThatIsNotAStringIsAConfigError() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"bad-ctor\","
+                + "\"constructor\":{\"apiKey\":42,\"env\":\"dev\",\"version\":\"1.0.0\"},\"input\":{}}", exitCode);
+
+        assertEquals(2, exitCode[0]);
+        assertEquals("constructor.apiKey must be a string", new JSONObject(output).getString("error"));
+    }
+
+    @Test(timeout = 60_000)
+    public void aNullConstructorFieldStillReachesTheSdk() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"null-ctor\","
+                + "\"constructor\":{\"apiKey\":null,\"env\":\"dev\",\"version\":\"1.0.0\"},\"input\":{}}", exitCode);
+
+        assertEquals(1, exitCode[0]);
+        assertTrue(new JSONObject(output).getString("error").startsWith("Constructor threw: "));
+    }
+
+    @Test(timeout = 60_000)
+    public void aTrackOptionThatIsNotAStringIsAConfigError() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"wire-protocol\",\"fixture_id\":\"bad-option\",\"operation\":\"trackSchemaFromEvent\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"},"
+                + "\"input\":{\"eventName\":\"E\",\"eventProperties\":{},\"options\":{\"originHint\":7}}}", exitCode);
+
+        assertEquals(2, exitCode[0]);
+        assertEquals("options.originHint must be a string", new JSONObject(output).getString("error"));
+    }
 }

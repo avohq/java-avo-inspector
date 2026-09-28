@@ -76,6 +76,11 @@ public final class ConformanceHarness {
             return configError(fixtureId, "unsupported operation: " + operation);
         }
 
+        String badField = firstNonString(asMap(envelope.get("constructor")), "apiKey", "env", "version", "appName");
+        if (badField != null) {
+            return configError(fixtureId, "constructor." + badField + " must be a string");
+        }
+
         AvoInspector inspector;
         try {
             inspector = construct(asMap(envelope.get("constructor")));
@@ -102,6 +107,10 @@ public final class ConformanceHarness {
                 if (!(envelope.get("input") instanceof Map)) {
                     return configError(fixtureId, "trackSchemaFromEvent requires an input object");
                 }
+                String inputError = trackInputError(asMap(envelope.get("input")));
+                if (inputError != null) {
+                    return configError(fixtureId, inputError);
+                }
                 Object[] outcome = track(inspector, asMap(envelope.get("input")));
                 write(fixtureId, true, outcome[1], (String) outcome[0], null);
             } else {
@@ -116,6 +125,10 @@ public final class ConformanceHarness {
                     Map<String, Object> step = asMap(rawStep);
                     Object action = step.get("action");
                     if ("track".equals(action)) {
+                        String inputError = trackInputError(step);
+                        if (inputError != null) {
+                            return configError(fixtureId, inputError);
+                        }
                         Object[] outcome = track(inspector, step);
                         records.put(record("track", (String) outcome[0], outcome[1]));
                     } else if ("trackN".equals(action)) {
@@ -168,6 +181,21 @@ public final class ConformanceHarness {
             builder.disableBatchTimer((Boolean) options.get("disableBatchTimer"));
         }
         return new AvoInspector(builder.build());
+    }
+
+    // The fields track() casts to String; JSON null passes through as null for the SDK to handle.
+    private static String trackInputError(Map<String, Object> input) {
+        String badField = firstNonString(input, "eventName", "streamId");
+        if (badField != null) {
+            return badField + " must be a string";
+        }
+        if (input.get("options") instanceof Map) {
+            badField = firstNonString(asMap(input.get("options")), "outputReference", "originHint", "originAppVersion");
+            if (badField != null) {
+                return "options." + badField + " must be a string";
+            }
+        }
+        return null;
     }
 
     // Returns {outcome, value}. A thrown SDK error is the Java form of a rejected promise.
@@ -249,6 +277,17 @@ public final class ConformanceHarness {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> asMap(Object value) {
         return (Map<String, Object>) value;
+    }
+
+    // The first key whose value is present and not a string, or null when there is none.
+    private static String firstNonString(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value != null && !(value instanceof String)) {
+                return key;
+            }
+        }
+        return null;
     }
 
     private static String string(Object value, String fallback) {
