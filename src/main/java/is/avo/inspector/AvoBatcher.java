@@ -48,6 +48,9 @@ class AvoBatcher {
 
     @Nullable private final ScheduledThreadPoolExecutor timer;
     private final ThreadPoolExecutor sendExecutor;
+    // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
+    @Nullable volatile Runnable afterSwapForTesting;
+
     private final Set<Future<AvoNetworkCallsHandler.SendResult>> inFlight =
             Collections.newSetFromMap(new ConcurrentHashMap<Future<AvoNetworkCallsHandler.SendResult>, Boolean>());
 
@@ -74,7 +77,7 @@ class AvoBatcher {
      * is the event's own send when {@code batchSize == 1}.
      */
     List<Future<AvoNetworkCallsHandler.SendResult>> enqueue(@NotNull Map<String, Object> event) {
-        List<Map<String, Object>> batch = null;
+        List<SendTask> sends = null;
         int dropped = 0;
         synchronized (lock) {
             if (destroyed) {
@@ -86,7 +89,7 @@ class AvoBatcher {
             }
             buffer.addLast(event);
             if (buffer.size() >= batchSize) {
-                batch = swap();
+                sends = prepare(swap());
             } else if (buffer.size() == 1 && timer != null) {
                 armTimer(generation);
             }
@@ -95,20 +98,24 @@ class AvoBatcher {
         if (dropped > 0 && AvoInspector.isLogging()) {
             System.err.println("Avo Inspector: maxQueueSize exceeded; dropped " + dropped + " oldest event(s).");
         }
-        return batch != null ? dispatch(batch) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
+        Runnable afterSwap = afterSwapForTesting;
+        if (sends != null && afterSwap != null) {
+            afterSwap.run();
+        }
+        return sends != null ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
     }
 
     /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
     void flush(long timeoutMs) {
-        List<Map<String, Object>> batch;
+        List<SendTask> sends;
         synchronized (lock) {
             if (destroyed) {
                 return;
             }
-            batch = buffer.isEmpty() ? null : swap();
+            sends = buffer.isEmpty() ? null : prepare(swap());
         }
-        if (batch != null) {
-            dispatch(batch);
+        if (sends != null) {
+            submit(sends);
         }
 
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs));
@@ -166,14 +173,14 @@ class AvoBatcher {
             timer.schedule(new Runnable() {
                 @Override
                 public void run() {
-                    List<Map<String, Object>> batch;
+                    List<SendTask> sends;
                     synchronized (lock) {
                         if (destroyed || generation != armedGeneration || buffer.isEmpty()) {
                             return;
                         }
-                        batch = swap();
+                        sends = prepare(swap());
                     }
-                    dispatch(batch);
+                    submit(sends);
                 }
             }, flushMillis, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException ignored) {
@@ -181,9 +188,11 @@ class AvoBatcher {
         }
     }
 
-    // Outside the lock. apiKey is a header, so events for different AvoInspectorTargets travel in
-    // separate requests: one per (apiKey, appName), each keeping enqueue order.
-    private List<Future<AvoNetworkCallsHandler.SendResult>> dispatch(List<Map<String, Object>> batch) {
+    // Caller holds lock, so a swapped-out batch is in flight before the lock is released and a
+    // concurrent flush() waits for it. apiKey is a header, so events for different
+    // AvoInspectorTargets travel in separate requests: one per (apiKey, appName), each keeping
+    // enqueue order.
+    private List<SendTask> prepare(List<Map<String, Object>> batch) {
         Map<List<Object>, List<Map<String, Object>>> partitions = new LinkedHashMap<>();
         for (Map<String, Object> event : batch) {
             List<Object> key = Arrays.asList(event.get("apiKey"), event.get("appName"));
@@ -195,33 +204,47 @@ class AvoBatcher {
             partition.add(event);
         }
 
-        List<Future<AvoNetworkCallsHandler.SendResult>> sends = new ArrayList<>();
+        List<SendTask> sends = new ArrayList<>(partitions.size());
         for (Map.Entry<List<Object>, List<Map<String, Object>>> partition : partitions.entrySet()) {
-            final String apiKey = String.valueOf(partition.getKey().get(0));
-            final List<Map<String, Object>> events = partition.getValue();
-            FutureTask<AvoNetworkCallsHandler.SendResult> send = new FutureTask<AvoNetworkCallsHandler.SendResult>(
-                    new Callable<AvoNetworkCallsHandler.SendResult>() {
-                        @Override
-                        public AvoNetworkCallsHandler.SendResult call() {
-                            return sender.send(events, apiKey);
-                        }
-                    }) {
-                @Override
-                protected void done() {
-                    inFlight.remove(this);
-                }
-            };
-            // Tracked before it can run, so done() always finds it.
+            SendTask send = new SendTask(String.valueOf(partition.getKey().get(0)), partition.getValue());
             inFlight.add(send);
-            try {
-                sendExecutor.execute(send);
-                sends.add(send);
-            } catch (RejectedExecutionException e) {
-                // Destroyed concurrently: the batch is abandoned.
-                inFlight.remove(send);
-            }
+            sends.add(send);
         }
         return sends;
+    }
+
+    // Outside the lock: the HTTP send runs on the send executor.
+    private List<Future<AvoNetworkCallsHandler.SendResult>> submit(List<SendTask> sends) {
+        List<Future<AvoNetworkCallsHandler.SendResult>> submitted = new ArrayList<>(sends.size());
+        for (SendTask send : sends) {
+            try {
+                sendExecutor.execute(send);
+                submitted.add(send);
+            } catch (RejectedExecutionException e) {
+                // Destroyed concurrently: the batch is abandoned.
+                send.cancel(false);
+            }
+        }
+        return submitted;
+    }
+
+    private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
+        final int eventCount;
+
+        SendTask(final String apiKey, final List<Map<String, Object>> events) {
+            super(new Callable<AvoNetworkCallsHandler.SendResult>() {
+                @Override
+                public AvoNetworkCallsHandler.SendResult call() {
+                    return sender.send(events, apiKey);
+                }
+            });
+            this.eventCount = events.size();
+        }
+
+        @Override
+        protected void done() {
+            inFlight.remove(this);
+        }
     }
 
     @Nullable
