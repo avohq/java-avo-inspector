@@ -22,11 +22,16 @@ import java.util.zip.GZIPInputStream;
 class MockInspectorServer implements AutoCloseable {
 
     static class Request {
+        final String method;
+        final String path;
         final Map<String, String> headers;
         final byte[] rawBody;
+        // null when the request has no body.
         final JSONArray body;
 
-        Request(Map<String, String> headers, byte[] rawBody, JSONArray body) {
+        Request(String method, String path, Map<String, String> headers, byte[] rawBody, JSONArray body) {
+            this.method = method;
+            this.path = path;
             this.headers = headers;
             this.rawBody = rawBody;
             this.body = body;
@@ -38,6 +43,7 @@ class MockInspectorServer implements AutoCloseable {
     private volatile int status = 200;
     private volatile String responseBody = "{\"samplingRate\":1.0}";
     private volatile long responseDelayMs = 0;
+    private volatile String location;
 
     MockInspectorServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -57,6 +63,12 @@ class MockInspectorServer implements AutoCloseable {
     void respond(int status, String body) {
         this.status = status;
         this.responseBody = body;
+    }
+
+    void redirect(int status, String location) {
+        this.status = status;
+        this.responseBody = "";
+        this.location = location;
     }
 
     void delayResponses(long millis) {
@@ -88,8 +100,9 @@ class MockInspectorServer implements AutoCloseable {
         }
         byte[] raw = readAll(exchange.getRequestBody());
         byte[] json = "gzip".equals(headers.get("content-encoding")) ? readAll(new GZIPInputStream(new ByteArrayInputStream(raw))) : raw;
+        JSONArray body = json.length == 0 ? null : new JSONArray(new String(json, StandardCharsets.UTF_8));
         synchronized (requests) {
-            requests.add(new Request(headers, raw, new JSONArray(new String(json, StandardCharsets.UTF_8))));
+            requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getPath(), headers, raw, body));
         }
         if (responseDelayMs > 0) {
             try {
@@ -100,7 +113,10 @@ class MockInspectorServer implements AutoCloseable {
         }
         byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, response.length);
+        if (location != null) {
+            exchange.getResponseHeaders().set("Location", location);
+        }
+        exchange.sendResponseHeaders(status, response.length == 0 ? -1 : response.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(response);
         }

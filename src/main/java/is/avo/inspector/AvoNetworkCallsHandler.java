@@ -136,6 +136,9 @@ class AvoNetworkCallsHandler {
             connection.setConnectTimeout(TIMEOUT_MS);
             connection.setReadTimeout(TIMEOUT_MS);
             connection.setUseCaches(false);
+            // A 3xx is a non-200: following it could turn the POST into a GET and forward the
+            // api-key header to another host.
+            connection.setInstanceFollowRedirects(false);
             connection.setDoInput(true);
             connection.setDoOutput(true);
             // Fixed-length streaming sends Content-Length with the exact byte count (never chunked).

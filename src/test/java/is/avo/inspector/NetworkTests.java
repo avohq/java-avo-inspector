@@ -120,6 +120,19 @@ public class NetworkTests {
     }
 
     @Test
+    public void redirectsAreNotFollowed() throws Exception {
+        // Following a 302 would turn the POST into a GET and forward the api-key header.
+        AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
+        handler.endpointForTesting = server.url();
+        server.redirect(302, server.url() + "elsewhere");
+
+        assertEquals(AvoNetworkCallsHandler.SendResult.NON_200, handler.send(eventWithPadding(1), "test-key"));
+
+        assertEquals(1, server.requests().size());
+        assertEquals("POST", server.requests().get(0).method);
+    }
+
+    @Test
     public void aSendThatStartsAfterDestroyNeverConnects() {
         // destroy() aborts connections that are registered; a send that registers after it must
         // see the abort before connecting.
