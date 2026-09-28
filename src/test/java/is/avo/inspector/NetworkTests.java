@@ -120,6 +120,18 @@ public class NetworkTests {
     }
 
     @Test
+    public void aSendThatStartsAfterDestroyNeverConnects() {
+        // destroy() aborts connections that are registered; a send that registers after it must
+        // see the abort before connecting.
+        AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
+        handler.endpointForTesting = server.url();
+        handler.abortAll();
+
+        assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "test-key"));
+        assertEquals(0, server.requests().size());
+    }
+
+    @Test
     public void refusesToSendAnApiKeyWithControlCharacters() {
         AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
         handler.endpointForTesting = server.url();

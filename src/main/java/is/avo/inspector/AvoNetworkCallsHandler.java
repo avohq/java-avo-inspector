@@ -120,6 +120,11 @@ class AvoNetworkCallsHandler {
             connection = (HttpURLConnection) new URL(endpoint()).openConnection();
             final HttpURLConnection finalConnection = connection;
             activeConnections.add(connection);
+            // abortAll() sets the flag before disconnecting the registered connections, so a
+            // connection registered after that pass is caught here, before anything is sent.
+            if (aborted) {
+                return SendResult.FAILED;
+            }
             deadline = watchdog.schedule(new Runnable() {
                 @Override
                 public void run() {
