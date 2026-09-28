@@ -154,6 +154,26 @@ public class LoggingTests {
     }
 
     @Test
+    public void batchSizeAboveMaxQueueSizeAlwaysWarnsAndIsNotClamped() {
+        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
+                .env(AvoInspectorEnv.Prod).batchSize(30).maxQueueSize(2).build());
+        inspectors.add(inspector);
+
+        // Not clamped: batch-4 requires FIFO overflow in this configuration.
+        assertEquals(30, inspector.batchSize);
+        assertTrue(stderr(), stderr().contains("Avo Inspector: batchSize 30 is larger than maxQueueSize 2"));
+    }
+
+    @Test
+    public void batchSizeWithinMaxQueueSizeDoesNotWarn() {
+        inspectors.add(new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
+                .env(AvoInspectorEnv.Prod).batchSize(2).maxQueueSize(2).build()));
+        inspectors.add(new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
+                .env(AvoInspectorEnv.Dev).batchSize(30).maxQueueSize(2).build()));
+        assertEquals("", stderr());
+    }
+
+    @Test
     public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
         server.delayResponses(1000);
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev);

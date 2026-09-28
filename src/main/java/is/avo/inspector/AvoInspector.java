@@ -107,6 +107,13 @@ public class AvoInspector implements Inspector {
             }
         }
 
+        // Not clamped: the conformance suite (batch-4) requires FIFO overflow in this case.
+        if (batchSize > maxQueueSize) {
+            warn("batchSize " + batchSize + " is larger than maxQueueSize " + maxQueueSize
+                    + ", so a batch never fills: events are sent only by the scheduled flush or flush(), and the oldest are dropped once "
+                    + maxQueueSize + " are buffered. Set batchSize to at most maxQueueSize.");
+        }
+
         final AvoNetworkCallsHandler handler = this.networkCallsHandler;
         this.batcher = new AvoBatcher(new AvoBatcher.Sender() {
             @Override
