@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Conformance harness for avohq/spec-first-inspector-server-sdk, implementing
@@ -258,28 +259,38 @@ public final class ConformanceHarness {
         }
     }
 
-    // Real threads, released together, joined before the step resolves.
-    private static void trackN(final AvoInspector inspector, int count, final String prefix, final String streamId) {
+    // At most this many trackN worker threads, so a large count cannot exhaust the thread limit.
+    static final int MAX_TRACKN_WORKERS = 64;
+
+    // Real threads, released together, each taking the next call index until all count calls have
+    // run; joined before the step resolves.
+    private static void trackN(final AvoInspector inspector, final int count, final String prefix, final String streamId) {
         final CountDownLatch start = new CountDownLatch(1);
-        List<Thread> threads = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            final String eventName = prefix + i;
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        start.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
+        final AtomicInteger next = new AtomicInteger();
+        List<Thread> threads = new ArrayList<>();
+        try {
+            for (int w = 0; w < Math.min(count, MAX_TRACKN_WORKERS); w++) {
+                Thread thread = new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            start.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        for (int i = next.getAndIncrement(); i < count; i = next.getAndIncrement()) {
+                            inspector.trackSchemaFromEventAwaitingSend(prefix + i, Collections.emptyMap(), streamId, null);
+                        }
                     }
-                    inspector.trackSchemaFromEventAwaitingSend(eventName, Collections.emptyMap(), streamId, null);
-                }
-            });
-            thread.start();
-            threads.add(thread);
+                });
+                thread.start();
+                threads.add(thread);
+            }
+        } finally {
+            // Released even if a thread failed to start, so the started ones finish and the step can report.
+            start.countDown();
         }
-        start.countDown();
         for (Thread thread : threads) {
             try {
                 thread.join();

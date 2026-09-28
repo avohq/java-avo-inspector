@@ -7,7 +7,11 @@ import java.io.File;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
@@ -21,6 +25,10 @@ public class HarnessTests {
     }
 
     private static String runHarness(String envelope, int[] exitCode) throws Exception {
+        return runHarness(envelope, exitCode, null);
+    }
+
+    private static String runHarness(String envelope, int[] exitCode, String mockEndpoint) throws Exception {
         List<String> command = Arrays.asList(
                 System.getProperty("java.home") + File.separator + "bin" + File.separator + "java",
                 // A platform whose default charset cannot encode the output.
@@ -30,14 +38,28 @@ public class HarnessTests {
         ProcessBuilder builder = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.INHERIT);
         builder.environment().put("LC_ALL", "C");
         builder.environment().put("LANG", "C");
-        Process process = builder.start();
-        try (OutputStream stdin = process.getOutputStream()) {
-            stdin.write((envelope + "\n").getBytes(StandardCharsets.UTF_8));
+        if (mockEndpoint != null) {
+            builder.environment().put("AVO_INSPECTOR_MOCK_ENDPOINT", mockEndpoint);
         }
-        byte[] stdout = MockInspectorServer.readAll(process.getInputStream());
-        assertTrue("harness did not exit", process.waitFor(30, TimeUnit.SECONDS));
-        exitCode[0] = process.exitValue();
-        return new String(stdout, StandardCharsets.UTF_8).trim();
+        final Process process = builder.start();
+        try {
+            try (OutputStream stdin = process.getOutputStream()) {
+                stdin.write((envelope + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            // Drained on another thread so a harness that hangs with stdout open still hits the timeout.
+            FutureTask<byte[]> stdout = new FutureTask<>(new Callable<byte[]>() {
+                @Override
+                public byte[] call() throws Exception {
+                    return MockInspectorServer.readAll(process.getInputStream());
+                }
+            });
+            new Thread(stdout).start();
+            assertTrue("harness did not exit", process.waitFor(30, TimeUnit.SECONDS));
+            exitCode[0] = process.exitValue();
+            return new String(stdout.get(5, TimeUnit.SECONDS), StandardCharsets.UTF_8).trim();
+        } finally {
+            process.destroyForcibly();
+        }
     }
 
     @Test(timeout = 60_000)
@@ -176,6 +198,32 @@ public class HarnessTests {
 
             assertEquals(c[1], 2, exitCode[0]);
             assertEquals(c[1], new JSONObject(output).getString("error"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void trackNMakesEveryCallWhenCountExceedsTheWorkerPool() throws Exception {
+        // Well above the harness's pool of 64 workers.
+        int count = 500;
+        try (MockInspectorServer server = new MockInspectorServer()) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"fan-out\",\"operation\":\"sequence\","
+                    + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"staging\",\"version\":\"1.0.0\",\"batchSize\":50,\"disableBatchTimer\":true},"
+                    + "\"steps\":[{\"action\":\"trackN\",\"count\":" + count + ",\"eventNamePrefix\":\"E\"},{\"action\":\"flush\"}]}",
+                    exitCode, server.url());
+
+            assertEquals(output, 0, exitCode[0]);
+            Set<String> names = new HashSet<>();
+            int events = 0;
+            for (MockInspectorServer.Request request : server.requests()) {
+                for (int i = 0; i < request.body.length(); i++) {
+                    names.add(request.body.getJSONObject(i).getString("eventName"));
+                    events++;
+                }
+            }
+            assertEquals(count, events);
+            assertEquals(count, names.size());
+            assertTrue(names.contains("E0") && names.contains("E" + (count - 1)));
         }
     }
 }
