@@ -84,7 +84,7 @@ class AvoNetworkCallsHandler {
         // SPEC.md §7.2: refuse to send a header value that could split the request.
         for (Map.Entry<String, String> header : headers.entrySet()) {
             if (containsControlCharacter(header.getValue())) {
-                logError("send failed (" + header.getKey() + " header contains CR, LF or NUL)");
+                logError("send failed (" + header.getKey() + " header contains a control character)");
                 return failed("Request failed");
             }
         }
@@ -207,7 +207,9 @@ class AvoNetworkCallsHandler {
         }
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if (c == '\r' || c == '\n' || c == '\0') {
+            // Any C0 control character except horizontal tab, and DEL: none is valid in an HTTP
+            // header value (RFC 9110 field-value), and CR, LF and NUL can split the request.
+            if ((c < 0x20 && c != '\t') || c == 0x7F) {
                 return true;
             }
         }

@@ -44,7 +44,7 @@ public class AvoInspector implements Inspector {
 
     /**
      * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
-     *                                  {@code apiKey} contains CR, LF or NUL
+     *                                  {@code apiKey} contains a control character other than tab
      */
     public AvoInspector(@NotNull String apiKey, @NotNull String appVersion, @NotNull String appName, @NotNull AvoInspectorEnv env) {
         this(AvoInspectorOptions.builder().apiKey(apiKey).appVersion(appVersion).appName(appName).env(env).build());
@@ -52,7 +52,7 @@ public class AvoInspector implements Inspector {
 
     /**
      * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
-     *                                  {@code apiKey} contains CR, LF or NUL
+     *                                  {@code apiKey} contains a control character other than tab
      */
     public AvoInspector(@NotNull AvoInspectorOptions options) {
         if (options.apiKey == null || options.apiKey.trim().isEmpty()) {

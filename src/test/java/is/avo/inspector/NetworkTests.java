@@ -139,6 +139,8 @@ public class NetworkTests {
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\r\nX-Injected: 1"));
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\nmore"));
         assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\0"));
+        assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\u0007"));
+        assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "key\u007f"));
         assertEquals(0, server.requests().size());
     }
 

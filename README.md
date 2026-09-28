@@ -62,8 +62,8 @@ AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
         .build());
 ```
 
-Both constructors throw `IllegalArgumentException` when the API key is blank or contains a CR, LF or
-NUL character, or when the app version is blank. A missing or unknown env falls back to dev with a
+Both constructors throw `IllegalArgumentException` when the API key is blank or contains a control
+character other than tab (for example CR, LF or NUL), or when the app version is blank. A missing or unknown env falls back to dev with a
 warning.
 
 # Enabling logs
@@ -208,8 +208,8 @@ The SDK is safe to use from multiple threads.
   hook flushes buffered and in-flight events for up to 10 seconds; on SIGKILL, `Runtime.halt()` or
   a crash they are lost, even in dev. Call `flush()` before exit.
 - **The positional constructor validates its arguments.** It throws `IllegalArgumentException`
-  when the API key or the app version is blank, or when the API key contains a CR, LF or NUL
-  character.
+  when the API key or the app version is blank, or when the API key contains a control character
+  other than tab (for example CR, LF or NUL).
 - **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the

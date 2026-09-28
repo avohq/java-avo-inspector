@@ -53,7 +53,7 @@ public final class AvoInspectorOptions {
         private Builder() {
         }
 
-        /** Required. Must not be blank or contain CR, LF or NUL. */
+        /** Required. Must not be blank or contain a control character other than tab. */
         @NotNull
         public Builder apiKey(@Nullable String apiKey) {
             this.apiKey = apiKey;
