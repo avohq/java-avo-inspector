@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Minimal JSON reader for the conformance harness. Unlike org.json it keeps object key order
@@ -135,7 +136,7 @@ final class ConformanceJson {
                 case 'r': result.append('\r'); break;
                 case 't': result.append('\t'); break;
                 case 'u':
-                    if (pos + 4 > text.length()) {
+                    if (pos + 4 > text.length() || !HEX4.matcher(text.substring(pos, pos + 4)).matches()) {
                         throw error("bad unicode escape");
                     }
                     result.append((char) Integer.parseInt(text.substring(pos, pos + 4), 16));
@@ -146,6 +147,9 @@ final class ConformanceJson {
             }
         }
     }
+
+    private static final Pattern HEX4 = Pattern.compile("[0-9a-fA-F]{4}");
+    private static final Pattern NUMBER = Pattern.compile("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?");
 
     private Object readNumber() {
         int start = pos;
@@ -160,6 +164,10 @@ final class ConformanceJson {
             pos++;
         }
         String literal = text.substring(start, pos);
+        // Parsers below accept more than JSON does (e.g. "01", "1.", "+1").
+        if (!NUMBER.matcher(literal).matches()) {
+            throw error("bad number '" + literal + "'");
+        }
         try {
             if (integral) {
                 BigInteger value = new BigInteger(literal);

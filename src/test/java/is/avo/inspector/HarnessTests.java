@@ -94,4 +94,29 @@ public class HarnessTests {
         assertEquals(2, exitCode[0]);
         assertEquals("options.originHint must be a string", new JSONObject(output).getString("error"));
     }
+
+    @Test(timeout = 60_000)
+    public void inputThatIsNotStrictJsonIsAConfigError() throws Exception {
+        String ctor = "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"}";
+        for (String input : Arrays.asList("{\"a\":\"\\u+041\"}", "{\"a\":01}", "{\"a\":1.}", "{\"a\":+1}")) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"lenient\"," + ctor + ",\"input\":" + input + "}", exitCode);
+
+            assertEquals(input, 2, exitCode[0]);
+            assertTrue(input, new JSONObject(output).getString("error").startsWith("could not parse input envelope"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void strictJsonNumbersAndEscapesStillParse() throws Exception {
+        String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"strict\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"},"
+                + "\"input\":{\"\\u0041b\":0,\"f\":-1.5e+3,\"g\":10E2}}");
+
+        JSONObject envelope = new JSONObject(output);
+        assertEquals("Ab", envelope.getJSONArray("actual").getJSONObject(0).getString("propertyName"));
+        assertEquals("int", envelope.getJSONArray("actual").getJSONObject(0).getString("propertyType"));
+        assertEquals("float", envelope.getJSONArray("actual").getJSONObject(1).getString("propertyType"));
+        assertEquals("float", envelope.getJSONArray("actual").getJSONObject(2).getString("propertyType"));
+    }
 }
