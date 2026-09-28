@@ -66,7 +66,7 @@ class Util {
 
             Map<String, Object> prop = new HashMap<>();
             prop.put("propertyName", propKey);
-            if (propValue instanceof AvoEventSchemaType.AvoObject) {
+            if (propValue instanceof AvoEventSchemaType.AvoObject && propValue.legacyOverride == null) {
                 prop.put("propertyType", "object");
                 prop.put("children", legacyRemapProperties(((AvoEventSchemaType.AvoObject) propValue).children));
             } else {

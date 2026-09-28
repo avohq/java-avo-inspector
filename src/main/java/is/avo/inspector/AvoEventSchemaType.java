@@ -37,7 +37,16 @@ public abstract class AvoEventSchemaType {
      * {@link #hashCode()} keep using. The wire never uses it.
      */
     @NotNull
-    String legacyName() {
+    final String legacyName() {
+        return legacyOverride != null ? legacyOverride : computedLegacyName();
+    }
+
+    // Set by the extractor where 1.1.1 named a value differently from its structure (typed
+    // arrays, and types 1.1.1 did not recognise), so the value keeps its 1.1.1 name.
+    @Nullable String legacyOverride;
+
+    @NotNull
+    String computedLegacyName() {
         return getReportedName();
     }
 
@@ -142,10 +151,20 @@ public abstract class AvoEventSchemaType {
         // The union of element types, in HashSet order, as 1.1.1 kept them.
         @NotNull
         @Override
-        String legacyName() {
-            Set<String> subtypes = new HashSet<>();
+        String computedLegacyName() {
+            List<String> subtypes = new java.util.ArrayList<>(children.size());
             for (AvoEventSchemaType child : children) {
                 subtypes.add(child.legacyName());
+            }
+            return legacyListName(subtypes);
+        }
+
+        @NotNull
+        static String legacyListName(@NotNull List<String> subtypeNames) {
+            // A default-capacity set filled one by one, like 1.1.1's, so the iteration order matches.
+            Set<String> subtypes = new HashSet<>();
+            for (String subtypeName : subtypeNames) {
+                subtypes.add(subtypeName);
             }
 
             StringBuilder types = new StringBuilder();
@@ -190,7 +209,7 @@ public abstract class AvoEventSchemaType {
 
         @NotNull
         @Override
-        String legacyName() {
+        String computedLegacyName() {
             String jsonArrayString = Util.legacyRemapProperties(children).toString();
             return jsonArrayString.substring(1, jsonArrayString.length() - 1);
         }

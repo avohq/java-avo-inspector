@@ -98,6 +98,12 @@ public class AvoSchemaExtractor {
 	// ancestors: the containers on the path to val, by identity. A container that is its own
 	// ancestor is cut like the depth cap, so a cycle can neither recurse nor expand exponentially.
 	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth, Set<Object> ancestors) {
+		AvoEventSchemaType type = specType(val, depth, ancestors);
+		type.legacyOverride = legacyOverride(val);
+		return type;
+	}
+
+	private AvoEventSchemaType specType(@Nullable Object val, int depth, Set<Object> ancestors) {
 		if (isComplex(val) && (depth >= MAX_DEPTH || ancestors.contains(val))) {
 			return new AvoEventSchemaType.AvoTruncatedObject();
 		}
@@ -121,6 +127,51 @@ public class AvoSchemaExtractor {
 		}
 
 		return scalarType(val);
+	}
+
+	// The 1.1.1 name (behind toString/equals/hashCode) of a value whose name 1.1.1 did not derive
+	// from its elements or properties, or null when the name follows from the extracted type.
+	// 1.1.1 named typed arrays by their class alone and did not recognise the other types here.
+	@Nullable
+	static String legacyOverride(@Nullable Object val) {
+		if (val == null) {
+			return null;
+		}
+		if (val instanceof BigInteger || val instanceof BigDecimal || val instanceof AtomicInteger
+				|| val instanceof AtomicLong || val instanceof JSONObject
+				|| (val instanceof Collection && !(val instanceof List))) {
+			return "unknown";
+		}
+		if (!val.getClass().isArray()) {
+			return null;
+		}
+		String className = val.getClass().getName();
+		switch (className) {
+			case "[Ljava.lang.String;":
+				return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("string", "null"));
+			case "[Ljava.lang.Integer;":
+				return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("int", "null"));
+			case "[I":
+				return AvoEventSchemaType.AvoList.legacyListName(Collections.singletonList("int"));
+			case "[Ljava.lang.Boolean;":
+				return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("boolean", "null"));
+			case "[Z":
+				return AvoEventSchemaType.AvoList.legacyListName(Collections.singletonList("boolean"));
+			case "[Ljava.lang.Float;":
+			case "[Ljava.lang.Double;":
+				return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("float", "null"));
+			case "[D":
+			case "[F":
+				return AvoEventSchemaType.AvoList.legacyListName(Collections.singletonList("float"));
+			default:
+				if (className.startsWith("[L") && className.contains("List")) {
+					return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("list<>", "null"));
+				} else if (className.startsWith("[L")) {
+					// 1.1.1 typed these as a list of an empty object, whose name was "".
+					return AvoEventSchemaType.AvoList.legacyListName(Arrays.asList("", "null"));
+				}
+				return "unknown";
+		}
 	}
 
 	// The array branch of mapping(), in one pass over the elements: the list type comes from the

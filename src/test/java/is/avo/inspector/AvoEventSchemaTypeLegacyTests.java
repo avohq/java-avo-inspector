@@ -94,4 +94,69 @@ public class AvoEventSchemaTypeLegacyTests {
         assertEquals("list(int)", list.getReportedName());
         assertEquals("object", type(m("a", 1)).getReportedName());
     }
+
+    @Test
+    public void arrayNamesFollow111() {
+        assertEquals("list<string|null>", type(new String[]{"a"}).toString());
+        assertEquals("list<string|null>", type(new String[0]).toString());
+        assertEquals("list<null|int>", type(new Integer[]{1}).toString());
+        assertEquals("list<int>", type(new int[]{1}).toString());
+        assertEquals("list<int>", type(new int[0]).toString());
+        assertEquals("list<boolean|null>", type(new Boolean[]{true}).toString());
+        assertEquals("list<boolean>", type(new boolean[]{true}).toString());
+        assertEquals("list<null|float>", type(new Float[]{1f}).toString());
+        assertEquals("list<null|float>", type(new Double[]{1.0}).toString());
+        assertEquals("list<float>", type(new double[]{1}).toString());
+        assertEquals("list<float>", type(new float[0]).toString());
+        assertEquals("unknown", type(new byte[]{1}).toString());
+        assertEquals("unknown", type(new long[]{1}).toString());
+        assertEquals("unknown", type(new short[]{1}).toString());
+        assertEquals("unknown", type(new char[]{'a'}).toString());
+        assertEquals("list<|null>", type(new Long[]{1L}).toString());
+        assertEquals("list<null|list<>>", type(new ArrayList[]{new ArrayList<Object>()}).toString());
+        assertEquals("list<|null>", type(new Object[]{1}).toString());
+        assertEquals("unknown", type(new int[][]{{1}}).toString());
+    }
+
+    @Test
+    public void typesThat111DidNotRecogniseAreUnknown() {
+        JSONObject nestedJson = new JSONObject();
+        nestedJson.put("a", 1);
+        assertEquals("unknown", type(new java.util.HashSet<Object>(Arrays.asList("a"))).toString());
+        assertEquals("unknown", type(new java.math.BigDecimal("1.5")).toString());
+        assertEquals("unknown", type(java.math.BigInteger.ONE).toString());
+        assertEquals("unknown", type(new java.util.concurrent.atomic.AtomicInteger(1)).toString());
+        assertEquals("unknown", type(new java.util.concurrent.atomic.AtomicLong(1)).toString());
+        assertEquals("unknown", type(nestedJson).toString());
+        assertEquals("list<unknown>", type(Arrays.asList(nestedJson)).toString());
+        assertEquals("list<unknown>", type(new JSONArray().put(nestedJson)).toString());
+        assertEquals("list<unknown>", type(Arrays.asList(new java.math.BigDecimal("1"))).toString());
+        assertEquals("list<int|unknown>", type(Arrays.asList(new java.util.HashSet<Object>(), 1)).toString());
+    }
+
+    @Test
+    public void nestedNamesFollow111() {
+        assertEquals("list<list<string|null>>", type(Arrays.asList((Object) new String[]{"a"})).toString());
+        assertEquals("{\"propertyName\":\"s\",\"propertyType\":\"unknown\"}",
+                type(m("s", new java.util.HashSet<Object>(Arrays.asList(1)))).toString());
+        assertEquals("{\"propertyName\":\"s\",\"propertyType\":\"list<string|null>\"},{\"propertyName\":\"i\",\"propertyType\":\"list<int>\"}",
+                type(m("i", new int[0], "s", new String[0])).toString());
+        assertEquals("{\"propertyName\":\"b\",\"propertyType\":\"unknown\"}", type(m("b", java.math.BigInteger.TEN)).toString());
+    }
+
+    @Test
+    public void arrayAndUnknownEqualityFollows111() {
+        assertNotEquals(type(new String[]{"a"}), type(Arrays.asList("a")));
+        assertSame111(new int[0], new int[]{1});
+        assertSame111(new byte[]{1}, new Object() { });
+        assertSame111(new java.math.BigDecimal("1"), java.math.BigInteger.ONE);
+    }
+
+    @Test
+    public void wireTypesStayOnTheSpec() {
+        assertEquals("list(string)", type(new String[]{"a"}).getReportedName());
+        assertEquals("list(int)", type(new byte[]{1}).getReportedName());
+        assertEquals("float", type(new java.math.BigDecimal("1.5")).getReportedName());
+        assertEquals("object", type(new JSONObject().put("a", 1)).getReportedName());
+    }
 }
