@@ -47,6 +47,9 @@ class AvoNetworkCallsHandler {
     // SPEC.md §7.7: last-write-wins; a volatile double write is atomic.
     volatile double samplingRate = 1.0;
 
+    // Set by abortAll(): failures of abandoned requests are expected and not reported.
+    private volatile boolean aborted = false;
+
     private final Set<HttpURLConnection> activeConnections =
             java.util.Collections.newSetFromMap(new ConcurrentHashMap<HttpURLConnection, Boolean>());
 
@@ -82,7 +85,7 @@ class AvoNetworkCallsHandler {
         for (Map.Entry<String, String> header : headers.entrySet()) {
             if (containsControlCharacter(header.getValue())) {
                 logError("send failed (" + header.getKey() + " header contains CR, LF or NUL)");
-                return SendResult.FAILED;
+                return failed("Request failed");
             }
         }
 
@@ -95,7 +98,7 @@ class AvoNetworkCallsHandler {
             body = json.toString().getBytes(StandardCharsets.UTF_8);
         } catch (RuntimeException e) {
             logError("request serialization failed: " + e.getClass().getSimpleName());
-            return SendResult.FAILED;
+            return failed("Request failed");
         }
 
         if (body.length >= GZIP_THRESHOLD_BYTES) {
@@ -151,14 +154,12 @@ class AvoNetworkCallsHandler {
             updateSamplingRate(readFully(connection.getInputStream()));
             return SendResult.OK;
         } catch (SocketTimeoutException e) {
-            logError("Request timed out");
-            return SendResult.FAILED;
+            return failed("Request timed out");
         } catch (IOException e) {
-            logError(timedOut.get() ? "Request timed out" : "Request failed");
-            return SendResult.FAILED;
+            return failed(timedOut.get() ? "Request timed out" : "Request failed");
         } catch (RuntimeException e) {
-            logError("Request failed: " + e.getClass().getSimpleName());
-            return SendResult.FAILED;
+            logError("request error: " + e.getClass().getSimpleName());
+            return failed("Request failed");
         } finally {
             if (deadline != null) {
                 deadline.cancel(false);
@@ -188,6 +189,7 @@ class AvoNetworkCallsHandler {
 
     // Abandons in-flight requests (SPEC.md §4.5).
     void abortAll() {
+        aborted = true;
         for (HttpURLConnection connection : activeConnections) {
             connection.disconnect();
         }
@@ -242,7 +244,16 @@ class AvoNetworkCallsHandler {
         }
     }
 
-    // Never includes the apiKey or request bodies (SPEC.md §7.5.1).
+    // SPEC.md §7.5: a failed send is always reported, whatever the logging flag. Like every log
+    // here it never includes the apiKey or the request body (SPEC.md §7.5.1).
+    private SendResult failed(String reason) {
+        if (!aborted) {
+            System.err.println("Avo Inspector: schema sending failed: " + reason + ".");
+        }
+        return SendResult.FAILED;
+    }
+
+    // Diagnostic detail, only when logging is enabled. Never includes the apiKey or request bodies.
     private static void logError(String message) {
         if (AvoInspector.isLogging()) {
             System.err.println("Avo Inspector: " + message);

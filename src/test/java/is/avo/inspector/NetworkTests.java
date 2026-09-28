@@ -270,11 +270,20 @@ public class NetworkTests {
             AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
             handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
 
+            java.io.PrintStream originalErr = System.err;
+            java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+            System.setErr(new java.io.PrintStream(captured, true, "UTF-8"));
             long start = System.currentTimeMillis();
-            // The backlog completes the TCP handshake; nobody ever answers.
-            assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "test-key"));
+            try {
+                // The backlog completes the TCP handshake; nobody ever answers.
+                assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "test-key"));
+            } finally {
+                System.setErr(originalErr);
+            }
             long elapsed = System.currentTimeMillis() - start;
             assertTrue("elapsed " + elapsed, elapsed >= 9_000 && elapsed < 15_000);
+            // Reported whatever the logging flag (SPEC.md §7.5).
+            assertTrue(captured.toString("UTF-8").contains("Avo Inspector: schema sending failed: Request timed out."));
         }
     }
 

@@ -1,0 +1,147 @@
+package is.avo.inspector;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+// SPEC.md §7.5 / §4.2: failures are reported whatever the logging flag; the rest stays opt-in.
+public class LoggingTests {
+
+    private static final String API_KEY = "secret-key-4f2a";
+
+    private MockInspectorServer server;
+    private final List<AvoInspector> inspectors = new ArrayList<>();
+    private PrintStream originalErr;
+    private ByteArrayOutputStream captured;
+
+    @Before
+    public void setUp() throws Exception {
+        server = new MockInspectorServer();
+        originalErr = System.err;
+        captured = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(captured, true, "UTF-8"));
+    }
+
+    @After
+    public void tearDown() {
+        System.setErr(originalErr);
+        for (AvoInspector inspector : inspectors) {
+            inspector.destroy();
+        }
+        server.close();
+        AvoInspector.enableLogging(false);
+    }
+
+    private String stderr() {
+        return new String(captured.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    private AvoInspector inspector(AvoInspectorEnv env) {
+        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder()
+                .apiKey(API_KEY).appVersion("1.0.0").env(env).batchSize(1).build());
+        inspector.networkCallsHandler.endpointForTesting = server.url();
+        inspectors.add(inspector);
+        AvoInspector.enableLogging(false);
+        return inspector;
+    }
+
+    private static String closedPortUrl() throws Exception {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return "http://127.0.0.1:" + socket.getLocalPort() + "/";
+        }
+    }
+
+    @Test
+    public void networkErrorIsLoggedWithLoggingOff() throws Exception {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        inspector.networkCallsHandler.endpointForTesting = closedPortUrl();
+
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+
+        assertTrue(stderr(), stderr().contains("Avo Inspector: schema sending failed: Request failed."));
+        assertFalse(stderr().contains(API_KEY));
+    }
+
+    @Test
+    public void headerGuardFailureIsLoggedWithLoggingOff() {
+        AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("prod");
+        handler.endpointForTesting = server.url();
+
+        handler.send(Collections.singletonList(Collections.<String, Object>emptyMap()), "secret\r\nkey");
+
+        assertTrue(stderr(), stderr().contains("Avo Inspector: schema sending failed: Request failed."));
+        assertFalse(stderr().contains("secret"));
+        assertEquals(0, server.requests().size());
+    }
+
+    @Test
+    public void internalErrorIsLoggedWithLoggingOff() {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        Map<String, Object> broken = new java.util.AbstractMap<String, Object>() {
+            @Override
+            public java.util.Set<Entry<String, Object>> entrySet() {
+                throw new IllegalStateException("boom");
+            }
+        };
+
+        assertTrue(inspector.trackSchemaFromEvent("Event", broken).isEmpty());
+
+        assertTrue(stderr(), stderr().contains("Avo Inspector: something went wrong. Please report to support@avo.app."));
+        assertFalse(stderr().contains(API_KEY));
+    }
+
+    @Test
+    public void non200StaysBehindTheLoggingFlag() throws Exception {
+        server.respond(500, "{}");
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        assertEquals(1, server.requests().size());
+        assertEquals("", stderr());
+
+        AvoInspector.enableLogging(true);
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        assertTrue(stderr(), stderr().contains("Avo Inspector: Failed with code 500"));
+        assertFalse(stderr().contains(API_KEY));
+    }
+
+    @Test
+    public void successfulSendIsSilentWithLoggingOff() throws Exception {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.flush();
+
+        assertEquals(1, server.requests().size());
+        assertEquals("", stderr());
+    }
+
+    @Test
+    public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
+        server.delayResponses(1000);
+        AvoInspector inspector = inspector(AvoInspectorEnv.Dev);
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        server.awaitRequest(0, 5000);
+
+        inspector.destroy();
+        Thread.sleep(1500);
+
+        assertFalse(stderr(), stderr().contains("schema sending failed"));
+    }
+}

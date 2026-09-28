@@ -309,9 +309,7 @@ public class AvoInspector implements Inspector {
         try {
             batcher.flush(timeoutMs);
         } catch (Throwable e) {
-            if (isLogging()) {
-                System.err.println("Avo Inspector: flush failed: " + e.getClass().getSimpleName());
-            }
+            System.err.println(Util.INTERNAL_ERROR_MESSAGE + " " + e);
         }
     }
 
