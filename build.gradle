@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'com.github.avohq'
-version '1.1.1'
+version '1.2.0'
 
 repositories {
     mavenCentral()
@@ -15,15 +15,25 @@ dependencies {
     implementation 'org.jetbrains:annotations:23.0.0'
     api 'org.json:json:20220320'
 
-    //testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.0'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.0'
     testImplementation 'junit:junit:4.13.2'
-    testImplementation "org.mockito:mockito-core:2.28.2"
+    testRuntimeOnly 'org.junit.vintage:junit-vintage-engine:5.9.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.9.0'
 }
 
 java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
     withSourcesJar()
     withJavadocJar()
+}
+
+// Compile against the Java 8 API even when building on a newer JDK (javac 8 has no --release).
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:-options'
+    if (JavaVersion.current().isJava9Compatible()) {
+        options.release = 8
+    }
 }
 
 publishing {
@@ -38,21 +48,41 @@ test {
     useJUnitPlatform()
 }
 
-task createProperties(dependsOn: processResources) {
+// libVersion on the wire comes from AvoInspectorVersion.VERSION (SPEC.md §7.3.3); keep it in step
+// with the published artifact version.
+tasks.register('verifyVersionConstant') {
+    def versionFile = file('src/main/java/is/avo/inspector/AvoInspectorVersion.java')
+    inputs.file(versionFile)
     doLast {
-        new File("$buildDir/resources/main/version.properties").withWriter { w ->
-            Properties p = new Properties()
-            p['version'] = version.toString()
-            p.store w, null
+        def matcher = versionFile.text =~ /String VERSION = "([^"]+)"/
+        if (!matcher.find() || matcher.group(1) != project.version.toString()) {
+            throw new GradleException("AvoInspectorVersion.VERSION must equal the project version ${project.version}")
         }
     }
 }
+check.dependsOn verifyVersionConstant
 
-classes {
-    dependsOn createProperties
+// Conformance harness (runner-contract 1.1.0). Not part of the published artifact.
+sourceSets {
+    conformance {
+        java.srcDir 'conformance/src/main/java'
+        compileClasspath += sourceSets.main.output + configurations.runtimeClasspath
+        runtimeClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
+tasks.register('conformanceJar', Jar) {
+    archiveFileName = 'avo-inspector-conformance.jar'
+    destinationDirectory = layout.buildDirectory.dir('conformance')
+    manifest { attributes 'Main-Class': 'is.avo.inspector.ConformanceHarness' }
+    from sourceSets.main.output
+    from sourceSets.conformance.output
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
 }
 
 wrapper {
-    gradleVersion = "7.3.3"
+    gradleVersion = "8.12"
     distributionType = Wrapper.DistributionType.ALL
 }
