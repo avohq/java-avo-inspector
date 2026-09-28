@@ -82,6 +82,6 @@ class AvoNetworkCallsBodyFactory {
     // Unicode whitespace, like String.prototype.trim (String.trim would also strip NUL and other controls).
     private static boolean isWhitespace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r'
-                || c == '﻿' || Character.isSpaceChar(c);
+                || c == '\uFEFF' || Character.isSpaceChar(c);
     }
 }
