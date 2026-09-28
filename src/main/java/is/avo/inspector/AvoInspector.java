@@ -55,13 +55,8 @@ public class AvoInspector implements Inspector {
      *                                  {@code apiKey} contains a control character other than tab
      */
     public AvoInspector(@NotNull AvoInspectorOptions options) {
-        if (options.apiKey == null || options.apiKey.trim().isEmpty()) {
-            throw new IllegalArgumentException(NO_API_KEY_MESSAGE);
-        }
-        if (AvoNetworkCallsHandler.containsControlCharacter(options.apiKey)) {
-            throw new IllegalArgumentException(API_KEY_CONTROL_CHARACTER_MESSAGE);
-        }
-        if (options.appVersion == null || options.appVersion.trim().isEmpty()) {
+        validateApiKey(options.apiKey);
+        if (isBlank(options.appVersion)) {
             throw new IllegalArgumentException(NO_VERSION_MESSAGE);
         }
 
@@ -123,6 +118,24 @@ public class AvoInspector implements Inspector {
         }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer);
 
         enableLogging(resolvedEnv == AvoInspectorEnv.Dev);
+    }
+
+    // SPEC.md §4.1. Control characters are checked first, so a key of only NUL reports that.
+    static void validateApiKey(@Nullable String apiKey) {
+        if (apiKey == null) {
+            throw new IllegalArgumentException(NO_API_KEY_MESSAGE);
+        }
+        if (AvoNetworkCallsHandler.containsControlCharacter(apiKey)) {
+            throw new IllegalArgumentException(API_KEY_CONTROL_CHARACTER_MESSAGE);
+        }
+        if (isBlank(apiKey)) {
+            throw new IllegalArgumentException(NO_API_KEY_MESSAGE);
+        }
+    }
+
+    // Empty or Unicode whitespace only (String.trim() misses e.g. U+00A0 and strips controls).
+    static boolean isBlank(@Nullable String value) {
+        return AvoNetworkCallsBodyFactory.normalize(value) == null;
     }
 
     private static AvoInspectorEnv resolveEnv(AvoInspectorOptions options) {

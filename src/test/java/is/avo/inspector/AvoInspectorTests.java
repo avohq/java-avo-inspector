@@ -70,6 +70,22 @@ public class AvoInspectorTests {
     }
 
     @Test
+    public void unicodeWhitespaceIsBlank() {
+        String noKey = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
+        assertConstructorThrows(noKey, AvoInspectorOptions.builder().apiKey("\u00a0\u2003").appVersion("1.0.0").build());
+        assertConstructorThrows(noKey, AvoInspectorOptions.builder().apiKey("\t").appVersion("1.0.0").build());
+        String noVersion = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
+        assertConstructorThrows(noVersion, AvoInspectorOptions.builder().apiKey("key").appVersion("\u3000").build());
+    }
+
+    @Test
+    public void controlCharactersAreReportedBeforeBlankness() {
+        String message = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
+        assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey("\0").appVersion("1.0.0").build());
+        assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey(" \r\n ").appVersion("1.0.0").build());
+    }
+
+    @Test
     public void rejectsMissingOrBlankVersion() {
         String message = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
         assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey("key").build());
