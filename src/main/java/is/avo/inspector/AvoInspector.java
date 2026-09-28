@@ -15,6 +15,7 @@ public class AvoInspector implements Inspector {
 
     static final String NO_API_KEY_MESSAGE = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
     static final String API_KEY_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
+    static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "Avo Inspector: apiKey must not contain control characters";
     static final String NO_VERSION_MESSAGE = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
 
     static final int DEFAULT_BATCH_SIZE = 30;
@@ -125,8 +126,12 @@ public class AvoInspector implements Inspector {
         if (apiKey == null) {
             throw new IllegalArgumentException(NO_API_KEY_MESSAGE);
         }
-        if (AvoNetworkCallsHandler.containsControlCharacter(apiKey)) {
+        if (apiKey.indexOf('\r') >= 0 || apiKey.indexOf('\n') >= 0 || apiKey.indexOf('\0') >= 0) {
             throw new IllegalArgumentException(API_KEY_CONTROL_CHARACTER_MESSAGE);
+        }
+        // The spec's message names CR, LF and NUL only, so other control characters get their own.
+        if (AvoNetworkCallsHandler.containsControlCharacter(apiKey)) {
+            throw new IllegalArgumentException(API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE);
         }
         if (isBlank(apiKey)) {
             throw new IllegalArgumentException(NO_API_KEY_MESSAGE);

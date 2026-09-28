@@ -58,9 +58,14 @@ public class AvoInspectorTests {
     @Test
     public void rejectsApiKeyWithControlCharacters() {
         String message = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
-        for (String key : new String[]{"key\r", "ke\ny", "\0key", "key\r\nX-Injected: 1",
-                "key\u0001", "key\u000b", "key\u001b[31m", "key\u001f", "key\u007f", "key\u0080", "key\u0085", "key\u009f"}) {
+        for (String key : new String[]{"key\r", "ke\ny", "\0key", "key\r\nX-Injected: 1", "key\u0001\n"}) {
             assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey(key).appVersion("1.0.0").build());
+        }
+        // Other control characters get a message of their own; the spec message names CR, LF and NUL.
+        String other = "Avo Inspector: apiKey must not contain control characters";
+        for (String key : new String[]{"key\u0001", "key\u000b", "key\u001b[31m", "key\u001f", "key\u007f",
+                "key\u0080", "key\u0085", "key\u009f"}) {
+            assertConstructorThrows(other, AvoInspectorOptions.builder().apiKey(key).appVersion("1.0.0").build());
         }
     }
 
@@ -102,6 +107,8 @@ public class AvoInspectorTests {
         assertTargetThrows(noKey, " \u00a0", "App");
         assertTargetThrows(control, "bad\rkey", "App");
         assertTargetThrows(control, "\0", "App");
+        assertTargetThrows("Avo Inspector: apiKey must not contain control characters", "key\u0007", "App");
+        assertTargetThrows("Avo Inspector: apiKey must not contain control characters", "key\u0085", "App");
         assertTargetThrows("[Avo Inspector] No app name provided. AvoInspectorTarget requires an app name; use \"\" for none.", "key", null);
 
         new AvoInspectorTarget("key\twith-tab", "", "1.0.0");
