@@ -116,9 +116,18 @@ public abstract class AvoEventSchemaType {
         // Mapped elements in order, primitive types deduplicated (SPEC.md §9.3.3).
         @NotNull final List<AvoEventSchemaType> children;
 
+        // The elements behind the 1.1.1 name, deduplicated by 1.1.1 name.
+        @NotNull final List<AvoEventSchemaType> legacyElements;
+
         AvoList(@NotNull String elementType, @NotNull List<AvoEventSchemaType> children) {
+            this(elementType, children, children);
+        }
+
+        AvoList(@NotNull String elementType, @NotNull List<AvoEventSchemaType> children,
+                @NotNull List<AvoEventSchemaType> legacyElements) {
             this.elementType = elementType;
             this.children = children;
+            this.legacyElements = legacyElements;
         }
 
         @NotNull
@@ -152,9 +161,9 @@ public abstract class AvoEventSchemaType {
         @NotNull
         @Override
         String computedLegacyName() {
-            List<String> subtypes = new java.util.ArrayList<>(children.size());
-            for (AvoEventSchemaType child : children) {
-                subtypes.add(child.legacyName());
+            List<String> subtypes = new java.util.ArrayList<>(legacyElements.size());
+            for (AvoEventSchemaType element : legacyElements) {
+                subtypes.add(element.legacyName());
             }
             return legacyListName(subtypes);
         }

@@ -195,6 +195,10 @@ public class AvoSchemaExtractor {
 		boolean first = true;
 		List<AvoEventSchemaType> children = new ArrayList<>();
 		Set<String> seenPrimitives = new HashSet<>();
+		// The 1.1.1 union (toString/equals) dedups by 1.1.1 name, which can differ from the wire
+		// name: BigInteger is "int" on the wire but was "unknown".
+		List<AvoEventSchemaType> legacyElements = new ArrayList<>();
+		Set<String> seenLegacyPrimitives = new HashSet<>();
 
 		for (Object element : elements) {
 			if (first) {
@@ -207,13 +211,16 @@ public class AvoSchemaExtractor {
 			if (nonPrimitive || seenPrimitives.add(mapped.getReportedName())) {
 				children.add(mapped);
 			}
+			if (nonPrimitive || seenLegacyPrimitives.add(mapped.legacyName())) {
+				legacyElements.add(mapped);
+			}
 		}
 
 		// "list(unknown)" is not a wire type (SPEC.md §7.3.4): an unrecognised element is an object.
 		if ("unknown".equals(elementType)) {
 			elementType = "object";
 		}
-		return new AvoEventSchemaType.AvoList(elementType, children);
+		return new AvoEventSchemaType.AvoList(elementType, children, legacyElements);
 	}
 
 	private static AvoEventSchemaType primitiveType(Class<?> primitive) {

@@ -159,4 +159,15 @@ public class AvoEventSchemaTypeLegacyTests {
         assertEquals("float", type(new java.math.BigDecimal("1.5")).getReportedName());
         assertEquals("object", type(new JSONObject().put("a", 1)).getReportedName());
     }
+
+    @Test
+    public void listUnionComesFromTheElementsNotTheWireDedup() {
+        // On the wire BigInteger is an int and BigDecimal a float, so the wire dedup merges them;
+        // 1.1.1 named them unknown.
+        assertEquals("list<int|unknown>", type(Arrays.asList(1, java.math.BigInteger.ONE)).toString());
+        assertEquals("list<float|unknown>", type(Arrays.asList(1.5, java.math.BigDecimal.ONE)).toString());
+        assertEquals("list<int|unknown>", type(Arrays.asList(java.math.BigInteger.ONE, 1)).toString());
+        assertEquals("list<int|unknown>", type(Arrays.asList(1, new java.util.concurrent.atomic.AtomicInteger(1), 2L)).toString());
+        assertEquals("list(int)", type(Arrays.asList(1, java.math.BigInteger.ONE)).getReportedName());
+    }
 }
