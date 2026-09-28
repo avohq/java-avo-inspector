@@ -169,8 +169,20 @@ public class AvoInspector implements Inspector {
      * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
+    @Override
     public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
         return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
+    }
+
+    /**
+     * Tracks an event for another Avo source, with a stream id and gateway options.
+     *
+     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
+     * @param options  gateway coordinates for this call only; may be {@code null}
+     */
+    @Override
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
     }
 
     @Override
@@ -189,8 +201,20 @@ public class AvoInspector implements Inspector {
      * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
+    @Override
     public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
         return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
+    }
+
+    /**
+     * Tracks an event for another Avo source, with a stream id and gateway options.
+     *
+     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
+     * @param options  gateway coordinates for this call only; may be {@code null}
+     */
+    @Override
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
     }
 
     /**
@@ -317,6 +341,7 @@ public class AvoInspector implements Inspector {
      * Sends every buffered event and waits up to 10 seconds for all in-flight sends. Call it
      * before the process exits or a serverless handler returns, or buffered events are lost.
      */
+    @Override
     public void flush() {
         flush(DEFAULT_FLUSH_TIMEOUT_MS);
     }
@@ -326,6 +351,7 @@ public class AvoInspector implements Inspector {
      * complete. A negative timeout means the 10 second default. Never throws; the instance stays
      * usable afterwards.
      */
+    @Override
     public void flush(long timeoutMs) {
         try {
             batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
@@ -339,6 +365,7 @@ public class AvoInspector implements Inspector {
      * abandoned, the flush timer stops and the exit-time flush is unregistered. Later track calls do
      * nothing and return an empty schema.
      */
+    @Override
     public void destroy() {
         destroyed = true;
         batcher.destroy();

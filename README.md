@@ -138,7 +138,11 @@ avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
                     }}, new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"));
 ```
 
-Events for different targets are sent in separate requests.
+Events for different targets are sent in separate requests. To combine a target with a stream id
+and gateway options, use `trackSchemaFromEvent(eventName, properties, target, streamId, options)`.
+
+All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
+methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
 
 ### 2.
 
