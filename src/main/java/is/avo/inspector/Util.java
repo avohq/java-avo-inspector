@@ -25,44 +25,45 @@ class Util {
         return ISO8601UTC.format(new Date());
     }
 
+    // The wire eventProperties array (SPEC.md §7.3.4): children only on objects and lists.
     static JSONArray remapProperties(Map<String, AvoEventSchemaType> originalProperties) {
-        List<Map<String, Object>> properties = new ArrayList<>();
+        JSONArray properties = new JSONArray();
 
-        for (String propKey : originalProperties.keySet()) {
-            AvoEventSchemaType propValue = originalProperties.get(propKey);
+        for (Map.Entry<String, AvoEventSchemaType> property : originalProperties.entrySet()) {
+            AvoEventSchemaType propValue = property.getValue();
             if (propValue == null) {
                 continue;
             }
 
-            Map<String, Object> prop = new HashMap<>();
-            prop.put("propertyName", propKey);
+            JSONObject prop = new JSONObject();
+            prop.put("propertyName", property.getKey());
+            prop.put("propertyType", propValue.getReportedName());
             if (propValue instanceof AvoEventSchemaType.AvoObject) {
-                prop.put("propertyType", "object");
                 prop.put("children", remapProperties(((AvoEventSchemaType.AvoObject) propValue).children));
-            } else {
-                prop.put("propertyType", propValue.getReportedName());
+            } else if (propValue instanceof AvoEventSchemaType.AvoList) {
+                prop.put("children", ((AvoEventSchemaType.AvoList) propValue).childrenToWire());
             }
-            properties.add(prop);
+            properties.put(prop);
         }
 
-        return new JSONArray(properties);
+        return properties;
     }
 
     static String readableJsonProperties(Map<String, AvoEventSchemaType> originalProperties) {
-        Map<String, String> propsDescription = new HashMap<>();
+        StringBuilder result = new StringBuilder("{");
 
-        for (String propName: originalProperties.keySet()) {
-            AvoEventSchemaType propType = originalProperties.get(propName);
-            String propValue = propType != null ? propType.getReadableName() : "null";
-            propsDescription.put(propName, propValue);
+        boolean first = true;
+        for (Map.Entry<String, AvoEventSchemaType> property : originalProperties.entrySet()) {
+            AvoEventSchemaType propType = property.getValue();
+            if (!first) {
+                result.append(", ");
+            }
+            result.append(JSONObject.quote(property.getKey())).append(": ")
+                    .append(propType != null ? propType.getReadableName() : "null");
+            first = false;
         }
 
-        try {
-            return new JSONObject(propsDescription).toString(1)
-                    .replace("\n", "").replace("\\", "");
-        } catch (JSONException ex) {
-            return new JSONObject(propsDescription).toString().replace("\\", "");
-        }
+        return result.append("}").toString();
     }
 
     public static Map<String, Object> jsonToMap(JSONObject json) {
@@ -183,10 +184,13 @@ class Util {
         return false;
     }
 
+    static final String INTERNAL_ERROR_MESSAGE = "Avo Inspector: something went wrong. Please report to support@avo.app.";
+
+    // SPEC.md §4.2 / §7.5: an internal error is always logged; in dev it is rethrown to the caller.
     static void handleException(Throwable e, String envName) {
+        System.err.println(INTERNAL_ERROR_MESSAGE + " " + e);
         if (AvoInspectorEnv.Dev.getName().equals(envName)) {
-            System.err.println("Avo Inspector: Something went wrong. Please report to support@avo.app. " + e);
-            throw new RuntimeException(e);
+            throw new RuntimeException(INTERNAL_ERROR_MESSAGE, e);
         }
     }
 }

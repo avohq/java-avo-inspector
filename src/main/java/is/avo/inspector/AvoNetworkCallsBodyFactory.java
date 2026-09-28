@@ -1,13 +1,14 @@
 package is.avo.inspector;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.json.JSONArray;
+import org.json.JSONObject;
 
+// One self-contained event object of the wire body (SPEC.md §7.3).
 class AvoNetworkCallsBodyFactory {
 
     String envName;
@@ -18,49 +19,69 @@ class AvoNetworkCallsBodyFactory {
         this.libVersion = libVersion;
     }
 
-    Map<String, Object> bodyForSessionStartedCall(@NotNull AvoInspectorTarget avoInspectorTarget) {
-        Map<String, Object> sessionBody = createBaseCallBody(avoInspectorTarget);
-        sessionBody.put("type", "sessionStarted");
-        return sessionBody;
-    }
+    Map<String, Object> bodyForEventSchemaCall(@NotNull String eventName,
+                                               @NotNull Map<String, AvoEventSchemaType> schema,
+                                               @NotNull AvoInspectorTarget avoInspectorTarget,
+                                               @NotNull String streamId,
+                                               @Nullable TrackOptions options,
+                                               double samplingRate) {
+        String outputReference = options != null ? normalize(options.getOutputReference()) : null;
+        String originHint = options != null ? normalize(options.getOriginHint()) : null;
+        String originAppVersion = options != null ? normalize(options.getOriginAppVersion()) : null;
 
-    @SuppressWarnings("SameParameterValue")
-    Map<String, Object> bodyForEventSchemaCall(String eventName,
-                                               Map<String, AvoEventSchemaType> schema,
-                                               @Nullable String eventId, @Nullable String eventHash,
-                                               @NotNull AvoInspectorTarget avoInspectorTarget) {
-        JSONArray properties = Util.remapProperties(schema);
-
-        Map<String, Object> eventSchemaBody = createBaseCallBody(avoInspectorTarget);
-
-        if (eventId != null) {
-            eventSchemaBody.put("avoFunction", true);
-            eventSchemaBody.put("eventId", eventId);
-            eventSchemaBody.put("eventHash", eventHash);
+        // SPEC.md §7.3.6: a source-scoped event never carries the instance's version.
+        String appVersion;
+        if (originAppVersion != null) {
+            appVersion = originAppVersion;
+        } else if (originHint != null) {
+            appVersion = null;
         } else {
-            eventSchemaBody.put("avoFunction", false);
+            appVersion = avoInspectorTarget.getAppVersion();
         }
 
-        eventSchemaBody.put("type", "event");
-        eventSchemaBody.put("eventName", eventName);
-        eventSchemaBody.put("eventProperties", properties);
-
-        return eventSchemaBody;
-    }
-
-    private Map<String, Object> createBaseCallBody(@NotNull AvoInspectorTarget avoInspectorTarget) {
-        Map<String, Object> result = new HashMap<>();
-
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("apiKey", avoInspectorTarget.getApiKey());
         result.put("appName", avoInspectorTarget.getAppName());
-        result.put("appVersion", avoInspectorTarget.getAppVersion());
+        result.put("appVersion", appVersion != null ? appVersion : JSONObject.NULL);
         result.put("libVersion", libVersion);
         result.put("env", envName);
-        result.put("libPlatform", "java-jvm");
+        result.put("libPlatform", AvoNetworkCallsHandler.LIB_PLATFORM);
         result.put("messageId", UUID.randomUUID().toString());
+        result.put("streamId", streamId);
         result.put("createdAt", Util.currentTimeAsISO8601UTCString());
-        result.put("sessionId", UUID.randomUUID().toString());
+        result.put("samplingRate", samplingRate);
+        result.put("type", "event");
+        result.put("eventName", eventName);
+        if (outputReference != null) {
+            result.put("outputReference", outputReference);
+        }
+        if (originHint != null) {
+            result.put("originHint", originHint);
+        }
+        result.put("eventProperties", Util.remapProperties(schema));
 
         return result;
+    }
+
+    @Nullable
+    static String normalize(@Nullable String value) {
+        if (value == null) {
+            return null;
+        }
+        int start = 0;
+        int end = value.length();
+        while (start < end && isWhitespace(value.charAt(start))) {
+            start++;
+        }
+        while (end > start && isWhitespace(value.charAt(end - 1))) {
+            end--;
+        }
+        return start == end ? null : value.substring(start, end);
+    }
+
+    // Unicode whitespace, like String.prototype.trim (String.trim would also strip NUL and other controls).
+    private static boolean isWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\u000B' || c == '\f' || c == '\r'
+                || c == '﻿' || Character.isSpaceChar(c);
     }
 }

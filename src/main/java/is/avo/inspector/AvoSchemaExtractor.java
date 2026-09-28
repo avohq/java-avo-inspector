@@ -3,30 +3,37 @@ package is.avo.inspector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
-import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
+// Schema extraction per SPEC.md §9. Property order follows the input's iteration order.
 public class AvoSchemaExtractor {
+
+	// SPEC.md §9.3.2: beyond this depth a nested value is reported as an empty object.
+	static final int MAX_DEPTH = 10;
 
 	@NotNull Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties, boolean shouldLogIfEnabled) {
 		Map<String, AvoEventSchemaType> result;
 
-		if (eventProperties == null) {
-			result = new HashMap<>();
-		} else if (eventProperties instanceof Map) {
-			result = extractSchemaFromMap((Map) eventProperties);
-		} else if (eventProperties instanceof JSONObject) {
-			result = extractSchemaFromJson((JSONObject) eventProperties);
+		if (eventProperties == null || eventProperties == JSONObject.NULL) {
+			result = new LinkedHashMap<>();
+		} else if (eventProperties instanceof Map || eventProperties instanceof JSONObject) {
+			result = mapObject(eventProperties, 0);
 		} else {
 			result = extractSchemaFromObject(eventProperties);
 		}
@@ -39,7 +46,7 @@ public class AvoSchemaExtractor {
 	}
 
 	private Map<String, AvoEventSchemaType> extractSchemaFromObject(@NotNull Object eventProperties) {
-		Map<String, AvoEventSchemaType> result = new HashMap<>();
+		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
 
 		List<Field> eventPropertiesFields = new ArrayList<>();
 
@@ -60,146 +67,125 @@ public class AvoSchemaExtractor {
 
 	private AvoEventSchemaType getAvoSchemaType(Object eventProperties, Field eventPropertyField) {
 		try {
-			return objectToAvoType(eventPropertyField.get(eventProperties));
+			return objectToAvoType(eventPropertyField.get(eventProperties), 0);
 		} catch (IllegalAccessException ignored) {
 			return new AvoEventSchemaType.AvoUnknownType();
 		}
 	}
 
-	private AvoEventSchemaType objectToAvoType(@Nullable Object val) {
-		if (val == null || val instanceof AvoEventSchemaType.AvoNull || val == JSONObject.NULL) {
-			return new AvoEventSchemaType.AvoNull();
+	// The object branch of mapping(): one entry per own property, in iteration order.
+	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth) {
+		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
+
+		if (object instanceof JSONObject) {
+			JSONObject json = (JSONObject) object;
+			for (Iterator<String> it = json.keys(); it.hasNext(); ) {
+				String key = it.next();
+				result.put(key, objectToAvoType(json.opt(key), depth));
+			}
 		} else {
-			if (val instanceof List) {
-				Set<AvoEventSchemaType> subtypes = new HashSet<>();
-				List list = (List) val;
-				for (Object v : list) {
-					subtypes.add(objectToAvoType(v));
-				}
-
-				return new AvoEventSchemaType.AvoList(subtypes);
-			} else if (val instanceof JSONArray) {
-				Set<AvoEventSchemaType> subItems = new HashSet<>();
-				JSONArray jsonArray = (JSONArray) val;
-				for (int i = 0; i < jsonArray.length(); i++) {
-					try {
-						subItems.add(objectToAvoType(jsonArray.get(i)));
-					} catch (JSONException ignored) { }
-				}
-
-				return new AvoEventSchemaType.AvoList(subItems);
-			} else if (val instanceof Map) {
-				AvoEventSchemaType.AvoObject result = new AvoEventSchemaType.AvoObject(new HashMap<String, AvoEventSchemaType>());
-
-				for (Object childName: ((Map)val).keySet()) {
-					String childNameString = (String) childName;
-
-					AvoEventSchemaType paramType = objectToAvoType(((Map)val).get(childName));
-
-					result.children.put(childNameString, paramType);
-				}
-
-				return result;
-			} else if (val instanceof Integer || val instanceof  Byte || val instanceof Long || val instanceof  Short) {
-				return new AvoEventSchemaType.AvoInt();
-			} else if (val instanceof Boolean) {
-				return new AvoEventSchemaType.AvoBoolean();
-			} else if (val instanceof Float || val instanceof  Double) {
-				return new AvoEventSchemaType.AvoFloat();
-			} else if (val instanceof String || val instanceof  Character) {
-				return new AvoEventSchemaType.AvoString();
-			} else {
-				return arrayOrUnknownToAvoType(val);
+			for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
+				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth));
 			}
 		}
+
+		return result;
 	}
 
-	private AvoEventSchemaType arrayOrUnknownToAvoType(@NotNull Object val) {
-		String className = val.getClass().getName();
-		switch (className) {
-			case "[Ljava.lang.String;":
-				Set<AvoEventSchemaType> subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoString());
-				subtypes.add(new AvoEventSchemaType.AvoNull());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[Ljava.lang.Integer;":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoInt());
-				subtypes.add(new AvoEventSchemaType.AvoNull());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[I":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoInt());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[Ljava.lang.Boolean;":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoBoolean());
-				subtypes.add(new AvoEventSchemaType.AvoNull());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[Z":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoBoolean());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[Ljava.lang.Float;":
-			case "[Ljava.lang.Double;":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoFloat());
-				subtypes.add(new AvoEventSchemaType.AvoNull());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			case "[D":
-			case "[F":
-				subtypes = new HashSet<>();
-				subtypes.add(new AvoEventSchemaType.AvoFloat());
-				return new AvoEventSchemaType.AvoList(subtypes);
-			default:
-				if (className.startsWith("[L") && className.contains("List")) {
-					subtypes = new HashSet<>();
-					subtypes.add(new AvoEventSchemaType.AvoList(new HashSet<AvoEventSchemaType>()));
-					subtypes.add(new AvoEventSchemaType.AvoNull());
-					return new AvoEventSchemaType.AvoList(subtypes);
-				} else if (className.startsWith("[L")) {
-					subtypes = new HashSet<>();
-					subtypes.add(new AvoEventSchemaType.AvoObject(new HashMap<String, AvoEventSchemaType>()));
-					subtypes.add(new AvoEventSchemaType.AvoNull());
-					return new AvoEventSchemaType.AvoList(subtypes);
-				} else {
-					return new AvoEventSchemaType.AvoUnknownType();
-				}
+	// The type of one property value, descending into objects and lists.
+	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth) {
+		if (isComplex(val) && depth >= MAX_DEPTH) {
+			return new AvoEventSchemaType.AvoObject(new LinkedHashMap<String, AvoEventSchemaType>());
 		}
+
+		List<Object> elements = listElements(val);
+		if (elements != null) {
+			Object first = elements.isEmpty() ? null : elements.get(0);
+			String elementType = isNull(first) ? "string" : basicType(first);
+			return new AvoEventSchemaType.AvoList(elementType, mapList(elements, depth + 1));
+		}
+
+		if (isObject(val)) {
+			return new AvoEventSchemaType.AvoObject(mapObject(val, depth + 1));
+		}
+
+		return scalarType(val);
 	}
 
-	private Map<String, AvoEventSchemaType> extractSchemaFromMap(@Nullable Map<?, ?> eventSchema) {
-		if (eventSchema == null) {
-			return new HashMap<>();
-		}
+	// The array branch of mapping(): each element mapped, primitive types deduplicated by value.
+	// Objects and nested lists are never merged (reference identity in the JS reference parser).
+	private List<AvoEventSchemaType> mapList(@NotNull List<Object> elements, int depth) {
+		List<AvoEventSchemaType> result = new ArrayList<>();
+		Set<String> seenPrimitives = new HashSet<>();
 
-		Map<String, AvoEventSchemaType> result = new HashMap<>();
-
-		for (Map.Entry<?, ?> entry: eventSchema.entrySet()) {
-			AvoEventSchemaType propertyType = objectToAvoType(entry.getValue());
-			result.put(entry.getKey().toString(), propertyType);
+		for (Object element : elements) {
+			AvoEventSchemaType mapped = objectToAvoType(element, depth);
+			if (mapped instanceof AvoEventSchemaType.AvoObject || mapped instanceof AvoEventSchemaType.AvoList) {
+				result.add(mapped);
+			} else if (seenPrimitives.add(mapped.getReportedName())) {
+				result.add(mapped);
+			}
 		}
 
 		return result;
 	}
 
-	private Map<String, AvoEventSchemaType> extractSchemaFromJson(@Nullable JSONObject eventSchema) {
-		if (eventSchema == null) {
-			return new HashMap<>();
+	// getBasicPropType(): a nested list counts as "object".
+	private static String basicType(@NotNull Object val) {
+		if (isComplex(val)) {
+			return "object";
 		}
+		return scalarType(val).getReportedName();
+	}
 
-		Map<String, AvoEventSchemaType> result = new HashMap<>();
-
-		for (Iterator<String> it = eventSchema.keys(); it.hasNext(); ) {
-			String key = it.next();
-			try {
-				Object value = eventSchema.get(key);
-
-				AvoEventSchemaType propertyType = objectToAvoType(value);
-				result.put(key, propertyType);
-			} catch (JSONException ignored) {}
+	private static AvoEventSchemaType scalarType(@Nullable Object val) {
+		if (isNull(val)) {
+			return new AvoEventSchemaType.AvoNull();
+		} else if (val instanceof Integer || val instanceof Long || val instanceof Short || val instanceof Byte
+				|| val instanceof BigInteger || val instanceof AtomicInteger || val instanceof AtomicLong) {
+			return new AvoEventSchemaType.AvoInt();
+		} else if (val instanceof Float || val instanceof Double || val instanceof BigDecimal) {
+			return new AvoEventSchemaType.AvoFloat();
+		} else if (val instanceof Boolean) {
+			return new AvoEventSchemaType.AvoBoolean();
+		} else if (val instanceof String || val instanceof Character) {
+			return new AvoEventSchemaType.AvoString();
+		} else {
+			return new AvoEventSchemaType.AvoUnknownType();
 		}
+	}
 
-		return result;
+	private static boolean isNull(@Nullable Object val) {
+		return val == null || val == JSONObject.NULL || val instanceof AvoEventSchemaType.AvoNull;
+	}
+
+	private static boolean isObject(@Nullable Object val) {
+		return val instanceof Map || val instanceof JSONObject;
+	}
+
+	private static boolean isComplex(@Nullable Object val) {
+		return isObject(val) || listElements(val) != null;
+	}
+
+	@Nullable
+	private static List<Object> listElements(@Nullable Object val) {
+		if (val instanceof Collection) {
+			return new ArrayList<Object>((Collection<?>) val);
+		} else if (val instanceof JSONArray) {
+			JSONArray jsonArray = (JSONArray) val;
+			List<Object> result = new ArrayList<>(jsonArray.length());
+			for (int i = 0; i < jsonArray.length(); i++) {
+				result.add(jsonArray.opt(i));
+			}
+			return result;
+		} else if (val != null && val.getClass().isArray()) {
+			int length = Array.getLength(val);
+			List<Object> result = new ArrayList<>(length);
+			for (int i = 0; i < length; i++) {
+				result.add(Array.get(val, i));
+			}
+			return result;
+		}
+		return null;
 	}
 }

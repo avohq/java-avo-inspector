@@ -5,17 +5,32 @@ import org.jetbrains.annotations.Nullable;
 import org.json.JSONObject;
 
 import java.util.*;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 import static is.avo.inspector.Util.handleException;
 
 public class AvoInspector implements Inspector {
 
-    private static boolean logsEnabled = false;
+    static final String NO_API_KEY_MESSAGE = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
+    static final String API_KEY_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
+    static final String NO_VERSION_MESSAGE = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
+
+    static final int DEFAULT_BATCH_SIZE = 30;
+    static final double DEFAULT_BATCH_FLUSH_SECONDS = 30;
+    static final int DEFAULT_MAX_QUEUE_SIZE = 1000;
+    static final long DEFAULT_FLUSH_TIMEOUT_MS = 10_000;
+
+    // Process-wide (SPEC.md §4.4).
+    private static volatile boolean logsEnabled = false;
 
     AvoInspectorTarget defaultAvoInspectorTarget;
     String libVersion;
 
     String env;
+
+    final int batchSize;
 
     AvoSchemaExtractor avoSchemaExtractor;
 
@@ -23,22 +38,99 @@ public class AvoInspector implements Inspector {
 
     AvoNetworkCallsBodyFactory networkCallsBodyFactory;
 
-    public AvoInspector(@NotNull String apiKey, @NotNull String appVersion, @NotNull String appName, @NotNull AvoInspectorEnv env) {
-        avoSchemaExtractor = new AvoSchemaExtractor();
+    final AvoBatcher batcher;
 
-        this.env = env.getName();
-        this.defaultAvoInspectorTarget = new AvoInspectorTarget(apiKey, appName, appVersion);
-        try {
-            this.libVersion = ResourceBundle.getBundle("version").getString("version");
-        } catch (Exception e) {
-            this.libVersion = "-";
+    private volatile boolean destroyed = false;
+
+    /**
+     * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
+     *                                  {@code apiKey} contains CR, LF or NUL
+     */
+    public AvoInspector(@NotNull String apiKey, @NotNull String appVersion, @NotNull String appName, @NotNull AvoInspectorEnv env) {
+        this(AvoInspectorOptions.builder().apiKey(apiKey).appVersion(appVersion).appName(appName).env(env).build());
+    }
+
+    /**
+     * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
+     *                                  {@code apiKey} contains CR, LF or NUL
+     */
+    public AvoInspector(@NotNull AvoInspectorOptions options) {
+        if (options.apiKey == null || options.apiKey.trim().isEmpty()) {
+            throw new IllegalArgumentException(NO_API_KEY_MESSAGE);
+        }
+        if (AvoNetworkCallsHandler.containsControlCharacter(options.apiKey)) {
+            throw new IllegalArgumentException(API_KEY_CONTROL_CHARACTER_MESSAGE);
+        }
+        if (options.appVersion == null || options.appVersion.trim().isEmpty()) {
+            throw new IllegalArgumentException(NO_VERSION_MESSAGE);
         }
 
-        this.networkCallsHandler = new AvoNetworkCallsHandler(env.getName());
+        AvoInspectorEnv resolvedEnv = resolveEnv(options);
 
-        this.networkCallsBodyFactory = new AvoNetworkCallsBodyFactory(env.getName(), libVersion);
+        avoSchemaExtractor = new AvoSchemaExtractor();
 
-        enableLogging(env == AvoInspectorEnv.Dev);
+        this.env = resolvedEnv.getName();
+        this.defaultAvoInspectorTarget = new AvoInspectorTarget(options.apiKey,
+                options.appName != null ? options.appName : "", options.appVersion);
+        this.libVersion = AvoInspectorVersion.VERSION;
+
+        this.networkCallsHandler = new AvoNetworkCallsHandler(this.env);
+
+        this.networkCallsBodyFactory = new AvoNetworkCallsBodyFactory(this.env, libVersion);
+
+        // SPEC.md §12.2: dev sends every event immediately.
+        int configuredBatchSize = DEFAULT_BATCH_SIZE;
+        if (options.batchSize != null) {
+            if (options.batchSize >= 1) {
+                configuredBatchSize = options.batchSize;
+            } else {
+                warn("Invalid batchSize " + options.batchSize + "; using default " + DEFAULT_BATCH_SIZE + ".");
+            }
+        }
+        this.batchSize = resolvedEnv == AvoInspectorEnv.Dev ? 1 : configuredBatchSize;
+
+        double batchFlushSeconds = DEFAULT_BATCH_FLUSH_SECONDS;
+        if (options.batchFlushSeconds != null) {
+            if (options.batchFlushSeconds > 0 && !options.batchFlushSeconds.isInfinite()) {
+                batchFlushSeconds = options.batchFlushSeconds;
+            } else {
+                warn("Invalid batchFlushSeconds " + options.batchFlushSeconds + "; using default 30.");
+            }
+        }
+
+        int maxQueueSize = DEFAULT_MAX_QUEUE_SIZE;
+        if (options.maxQueueSize != null) {
+            if (options.maxQueueSize >= 1) {
+                maxQueueSize = options.maxQueueSize;
+            } else {
+                warn("Invalid maxQueueSize " + options.maxQueueSize + "; using default " + DEFAULT_MAX_QUEUE_SIZE + ".");
+            }
+        }
+
+        final AvoNetworkCallsHandler handler = this.networkCallsHandler;
+        this.batcher = new AvoBatcher(new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
+                return handler.send(events, apiKey);
+            }
+        }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer);
+
+        enableLogging(resolvedEnv == AvoInspectorEnv.Dev);
+    }
+
+    private static AvoInspectorEnv resolveEnv(AvoInspectorOptions options) {
+        if (options.env != null) {
+            return options.env;
+        }
+        if (options.rawEnv != null) {
+            for (AvoInspectorEnv candidate : AvoInspectorEnv.values()) {
+                if (candidate.getName().equals(options.rawEnv)) {
+                    return candidate;
+                }
+            }
+        }
+        warn("Invalid env \"" + options.rawEnv + "\", falling back to \"dev\".");
+        return AvoInspectorEnv.Dev;
     }
 
     @Override
@@ -48,19 +140,17 @@ public class AvoInspector implements Inspector {
 
     @Override
     public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget) {
-        try {
-            logPreExtract(eventName, eventProperties);
+        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, null, null, false);
+    }
 
-            Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
-
-            trackSchemaInternal(eventName, schema, overrideAvoInspectorTarget);
-
-            return schema;
-
-        } catch (Exception e) {
-            handleException(e, AvoInspector.this.env);
-            return new HashMap<>();
-        }
+    /**
+     * Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1).
+     *
+     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
+     * @param options  gateway coordinates for this call only; may be {@code null}
+     */
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
     }
 
     @Override
@@ -70,19 +160,56 @@ public class AvoInspector implements Inspector {
 
     @Override
     public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget) {
-        try {
+        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, null, null, false);
+    }
 
+    /**
+     * Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1).
+     *
+     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
+     * @param options  gateway coordinates for this call only; may be {@code null}
+     */
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
+    }
+
+    /**
+     * Test seam for the conformance harness: like {@code trackSchemaFromEvent}, but when the event
+     * is sent immediately ({@code batchSize == 1}) it waits for that send and reports a non-200 as an
+     * empty schema, which is the per-call outcome of SPEC.md §7.5.
+     */
+    @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEventAwaitingSend(@NotNull String eventName, @Nullable Object eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, true);
+    }
+
+    private @NotNull Map<String, AvoEventSchemaType> trackFromEvent(@NotNull String eventName, @Nullable Object eventProperties,
+                                                                    @NotNull AvoInspectorTarget target, @Nullable String streamId,
+                                                                    @Nullable TrackOptions options, boolean awaitImmediateSend) {
+        if (destroyed) {
+            return new LinkedHashMap<>();
+        }
+        try {
             logPreExtract(eventName, eventProperties);
 
             Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
 
-            trackSchemaInternal(eventName, schema, overrideAvoInspectorTarget);
+            List<Future<AvoNetworkCallsHandler.SendResult>> sends = trackSchemaInternal(eventName, schema, target, streamId, options);
+
+            if (awaitImmediateSend && batchSize == 1) {
+                for (Future<AvoNetworkCallsHandler.SendResult> send : sends) {
+                    AvoNetworkCallsHandler.SendResult result = AvoBatcher.await(send,
+                            TimeUnit.MILLISECONDS.toNanos(AvoNetworkCallsHandler.TIMEOUT_MS + 1_000));
+                    if (result == AvoNetworkCallsHandler.SendResult.NON_200) {
+                        return new LinkedHashMap<>();
+                    }
+                }
+            }
 
             return schema;
 
         } catch (Exception e) {
             handleException(e, AvoInspector.this.env);
-            return new HashMap<>();
+            return new LinkedHashMap<>();
         }
     }
 
@@ -94,25 +221,45 @@ public class AvoInspector implements Inspector {
 
     @Override
     public void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema) {
+        if (destroyed) {
+            return;
+        }
         try {
-            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget);
+            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, null, null);
         } catch (Exception e) {
             handleException(e, AvoInspector.this.env);
         }
     }
 
-    private void trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema, @NotNull AvoInspectorTarget avoInspectorTarget) {
+    private List<Future<AvoNetworkCallsHandler.SendResult>> trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
+                                                                                 @NotNull AvoInspectorTarget avoInspectorTarget,
+                                                                                 @Nullable String streamId, @Nullable TrackOptions options) {
         if (eventSchema == null) {
-            eventSchema = new HashMap<>();
+            eventSchema = new LinkedHashMap<>();
+        }
+
+        if (streamId == null) {
+            streamId = "";
+        } else if (streamId.indexOf(':') >= 0) {
+            // SPEC.md §4.2: warn, but send the value unchanged.
+            warn("streamId contains ':'; using the value verbatim.");
         }
 
         logPostExtract(eventName, eventSchema);
 
-        List<Map<String, Object>> events = new ArrayList<>();
-        events.add(networkCallsBodyFactory.bodyForSessionStartedCall(avoInspectorTarget));
-        events.add(networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema, null, null, avoInspectorTarget));
+        // SPEC.md §7.7: sample each event at enqueue; the body carries the rate that governed it.
+        double samplingRate = networkCallsHandler.samplingRate;
+        if (ThreadLocalRandom.current().nextDouble() > samplingRate) {
+            if (isLogging()) {
+                System.out.println("Avo Inspector: Last event schema dropped due to sampling rate");
+            }
+            return Collections.emptyList();
+        }
 
-        networkCallsHandler.reportInspectorWithBatchBody(events);
+        Map<String, Object> event = networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema,
+                avoInspectorTarget, streamId, options, samplingRate);
+
+        return batcher.enqueue(event);
     }
 
     static void logPostExtract(@Nullable String eventName, @NotNull Map<String, AvoEventSchemaType> eventSchema) {
@@ -122,7 +269,7 @@ public class AvoInspector implements Inspector {
             for (String key : eventSchema.keySet()) {
                 AvoEventSchemaType value = eventSchema.get(key);
                 if (value != null) {
-                    String entry = "\t\"" + key + "\": \"" + value.getReportedName() + "\";\n";
+                    String entry = "\t\"" + key + "\": \"" + value.getReadableName() + "\";\n";
                     schemaString.append(entry);
                 }
             }
@@ -137,12 +284,50 @@ public class AvoInspector implements Inspector {
 
     @Override
     public @NotNull Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties) {
+        // SPEC.md §4.3: never throws.
         try {
             return avoSchemaExtractor.extractSchema(eventProperties, true);
-        } catch (Exception e) {
-            handleException(e, AvoInspector.this.env);
-            return new HashMap<>();
+        } catch (Throwable e) {
+            System.err.println(Util.INTERNAL_ERROR_MESSAGE + " " + e);
+            return new LinkedHashMap<>();
         }
+    }
+
+    /**
+     * Sends every buffered event and waits up to 10 seconds for all in-flight sends. Call it
+     * before the process exits or a serverless handler returns, or buffered events are lost.
+     */
+    public void flush() {
+        flush(DEFAULT_FLUSH_TIMEOUT_MS);
+    }
+
+    /**
+     * Sends every buffered event and waits up to {@code timeoutMs} for all in-flight sends to
+     * complete. Never throws; the instance stays usable afterwards.
+     */
+    public void flush(long timeoutMs) {
+        try {
+            batcher.flush(timeoutMs);
+        } catch (Throwable e) {
+            if (isLogging()) {
+                System.err.println("Avo Inspector: flush failed: " + e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /**
+     * Terminates the instance: buffered events are discarded unsent, in-flight sends are
+     * abandoned and the flush timer stops. Later track calls do nothing and return an empty schema.
+     */
+    public void destroy() {
+        destroyed = true;
+        batcher.destroy();
+        networkCallsHandler.abortAll();
+    }
+
+    // Test-only (runner-contract precondition.samplingRate); deliberately not public.
+    void setSamplingRateForTesting(double samplingRate) {
+        networkCallsHandler.samplingRate = samplingRate;
     }
 
     @SuppressWarnings("WeakerAccess")
@@ -153,5 +338,9 @@ public class AvoInspector implements Inspector {
     @SuppressWarnings("WeakerAccess")
     static public void enableLogging(boolean enabled) {
         logsEnabled = enabled;
+    }
+
+    private static void warn(String message) {
+        System.err.println("Avo Inspector: " + message);
     }
 }

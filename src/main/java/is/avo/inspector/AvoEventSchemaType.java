@@ -2,15 +2,29 @@ package is.avo.inspector;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.json.JSONArray;
 
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @SuppressWarnings("WeakerAccess")
 public abstract class AvoEventSchemaType {
 
+    /**
+     * The wire {@code propertyType} (SPEC.md §7.3.4), e.g. {@code "int"}, {@code "object"} or
+     * {@code "list(string)"}.
+     */
     @NotNull
     abstract String getReportedName();
+
+    /**
+     * The value this type contributes when it is an element of a list's {@code children}
+     * (SPEC.md §7.3.4): a type string for scalars, an array for objects and nested lists.
+     */
+    @NotNull
+    Object toListChild() {
+        return getReportedName();
+    }
 
     @NotNull protected String getReadableName() {
         return getReportedName();
@@ -19,7 +33,7 @@ public abstract class AvoEventSchemaType {
     @Override
     public boolean equals(@Nullable Object obj) {
         if (obj instanceof AvoEventSchemaType) {
-            return getReportedName().equals(((AvoEventSchemaType) obj).getReportedName());
+            return getReadableName().equals(((AvoEventSchemaType) obj).getReadableName());
         }
 
         return super.equals(obj);
@@ -27,13 +41,13 @@ public abstract class AvoEventSchemaType {
 
     @Override
     public int hashCode() {
-        return getReportedName().hashCode();
+        return getReadableName().hashCode();
     }
 
     @NotNull
     @Override
     public String toString() {
-        return getReportedName();
+        return getReadableName();
     }
 
     public static class AvoInt extends AvoEventSchemaType {
@@ -77,46 +91,41 @@ public abstract class AvoEventSchemaType {
     }
 
     public static class AvoList extends AvoEventSchemaType {
-        @NotNull Set<AvoEventSchemaType> subtypes;
+        // Basic type of the first element, "string" for an empty list (SPEC.md §9.2).
+        @NotNull final String elementType;
+        // Mapped elements in order, primitive types deduplicated (SPEC.md §9.3.3).
+        @NotNull final List<AvoEventSchemaType> children;
 
-        AvoList(@NotNull Set<AvoEventSchemaType> subtypes) {
-            this.subtypes = subtypes;
+        AvoList(@NotNull String elementType, @NotNull List<AvoEventSchemaType> children) {
+            this.elementType = elementType;
+            this.children = children;
         }
 
         @NotNull
         @Override
         String getReportedName() {
-            StringBuilder types = new StringBuilder();
+            return "list(" + elementType + ")";
+        }
 
-            boolean first = true;
-            for (AvoEventSchemaType subtype: subtypes) {
-                if (!first) {
-                    types.append("|");
-                }
-
-                types.append(subtype.getReportedName());
-                first = false;
+        @NotNull
+        JSONArray childrenToWire() {
+            JSONArray result = new JSONArray();
+            for (AvoEventSchemaType child : children) {
+                result.put(child.toListChild());
             }
+            return result;
+        }
 
-            return "list<" + types + ">";
+        @NotNull
+        @Override
+        Object toListChild() {
+            return childrenToWire();
         }
 
         @NotNull
         @Override
         protected String getReadableName() {
-            StringBuilder types = new StringBuilder();
-
-            boolean first = true;
-            for (AvoEventSchemaType subtype: subtypes) {
-                if (!first) {
-                    types.append("|");
-                }
-
-                types.append(subtype.getReadableName());
-                first = false;
-            }
-
-            return "list<" + types + ">";
+            return getReportedName() + childrenToWire();
         }
     }
 
@@ -131,15 +140,19 @@ public abstract class AvoEventSchemaType {
         @NotNull
         @Override
         String getReportedName() {
-            String jsonArrayString = Util.remapProperties(children).toString();
-            return jsonArrayString.substring(1, jsonArrayString.length() - 1);
+            return "object";
+        }
+
+        @NotNull
+        @Override
+        Object toListChild() {
+            return Util.remapProperties(children);
         }
 
         @NotNull
         @Override
         protected String getReadableName() {
-            String jsonArrayString = Util.readableJsonProperties(children);
-            return jsonArrayString;
+            return Util.readableJsonProperties(children);
         }
     }
 
