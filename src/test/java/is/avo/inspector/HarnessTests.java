@@ -17,6 +17,10 @@ import static org.junit.Assert.assertTrue;
 public class HarnessTests {
 
     private static String runHarness(String envelope) throws Exception {
+        return runHarness(envelope, new int[1]);
+    }
+
+    private static String runHarness(String envelope, int[] exitCode) throws Exception {
         List<String> command = Arrays.asList(
                 System.getProperty("java.home") + File.separator + "bin" + File.separator + "java",
                 // A platform whose default charset cannot encode the output.
@@ -32,6 +36,7 @@ public class HarnessTests {
         }
         byte[] stdout = MockInspectorServer.readAll(process.getInputStream());
         assertTrue("harness did not exit", process.waitFor(30, TimeUnit.SECONDS));
+        exitCode[0] = process.exitValue();
         return new String(stdout, StandardCharsets.UTF_8).trim();
     }
 
@@ -44,5 +49,18 @@ public class HarnessTests {
         JSONObject envelope = new JSONObject(output);
         assertEquals("utf8", envelope.getString("fixture_id"));
         assertEquals("prénom ✓ 名前", envelope.getJSONArray("actual").getJSONObject(0).getString("propertyName"));
+    }
+
+    @Test(timeout = 60_000)
+    public void aSequenceStepThatIsNotAnObjectIsAConfigError() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"bad-step\",\"operation\":\"sequence\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"},"
+                + "\"steps\":[42]}", exitCode);
+
+        JSONObject envelope = new JSONObject(output);
+        assertEquals(2, exitCode[0]);
+        assertEquals("bad-step", envelope.getString("fixture_id"));
+        assertEquals("sequence step is not an object", envelope.getString("error"));
     }
 }

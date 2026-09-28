@@ -110,6 +110,9 @@ public final class ConformanceHarness {
                 }
                 JSONArray records = new JSONArray();
                 for (Object rawStep : (List<?>) envelope.get("steps")) {
+                    if (!(rawStep instanceof Map)) {
+                        return configError(fixtureId, "sequence step is not an object");
+                    }
                     Map<String, Object> step = asMap(rawStep);
                     Object action = step.get("action");
                     if ("track".equals(action)) {
