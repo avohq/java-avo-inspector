@@ -102,6 +102,10 @@ public class AvoSchemaExtractor {
 		if (elements != null) {
 			Object first = elements.isEmpty() ? null : elements.get(0);
 			String elementType = isNull(first) ? "string" : basicType(first);
+			// "list(unknown)" is not a wire type (SPEC.md §7.3.4): an unrecognised element is an object.
+			if ("unknown".equals(elementType)) {
+				elementType = "object";
+			}
 			return new AvoEventSchemaType.AvoList(elementType, mapList(elements, depth + 1));
 		}
 

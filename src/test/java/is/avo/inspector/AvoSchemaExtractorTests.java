@@ -151,6 +151,14 @@ public class AvoSchemaExtractorTests {
     }
 
     @Test
+    public void listOfUnrecognisedValuesIsListOfObject() {
+        // "list(unknown)" is not a wire type (SPEC.md §7.3.4); an unrecognised scalar stays "unknown".
+        assertWire("[{propertyName:things,propertyType:'list(object)',children:[unknown]},"
+                        + "{propertyName:thing,propertyType:unknown}]",
+                props("things", Arrays.asList(new Object(), new Object()), "thing", new Object()));
+    }
+
+    @Test
     public void nullInputIsEmpty() {
         assertEquals(0, extractor.extractSchema(null, false).size());
     }
