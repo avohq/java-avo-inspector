@@ -125,4 +125,24 @@ public class AvoBatcherTests {
         Collections.sort(names);
         assertEquals(java.util.Arrays.asList("E1", "E10", "E2", "E3", "E4", "E9"), names);
     }
+
+    private static int threadsNamed(String prefix) {
+        int count = 0;
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.getName().startsWith(prefix)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Test
+    public void instancesShareOneTimerThread() {
+        for (int i = 0; i < 5; i++) {
+            // Each enqueue into an empty buffer arms that instance's flush timer.
+            batcher(recordingSender, 30, 1000, false).enqueue(event("E" + i));
+        }
+        int timerThreads = threadsNamed("avo-inspector-flush-timer");
+        assertTrue("timer threads: " + timerThreads, timerThreads <= 1);
+    }
 }

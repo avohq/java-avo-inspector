@@ -21,6 +21,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -55,7 +56,12 @@ class AvoBatcher {
     private long generation;
     private boolean destroyed;
 
-    @Nullable private final ScheduledThreadPoolExecutor timer;
+    // One daemon timer thread for all instances, so an idle instance holds no timer thread.
+    private static final ScheduledThreadPoolExecutor sharedTimer = newSharedTimer();
+
+    private final boolean timerEnabled;
+    // Guarded by lock: the pending scheduled flush, cancelled on destroy().
+    @Nullable private ScheduledFuture<?> pendingTimer;
     private final ThreadPoolExecutor sendExecutor;
     // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
     @Nullable volatile Runnable afterSwapForTesting;
@@ -70,16 +76,12 @@ class AvoBatcher {
         this.flushMillis = Math.max(1L, (long) (batchFlushSeconds * 1000.0));
 
         // Daemon threads: neither the timer nor a pending send holds the JVM open (SPEC.md §11.4).
-        if (!disableBatchTimer && batchSize > 1) {
-            timer = new ScheduledThreadPoolExecutor(1, daemonThreads("avo-inspector-flush-timer"));
-            timer.setRemoveOnCancelPolicy(true);
-        } else {
-            timer = null;
-        }
+        timerEnabled = !disableBatchTimer && batchSize > 1;
         // Bounded so an outage cannot pile up batches without limit: room for one buffer's worth of
         // batches, the oldest dropped first (at-most-once, like the maxQueueSize bound).
         int queuedBatches = Math.max(1, (maxQueueSize + batchSize - 1) / batchSize);
-        sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 60, TimeUnit.SECONDS,
+        // Send threads exit after 5 idle seconds, so an idle instance soon holds no thread.
+        sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 5, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<Runnable>(queuedBatches), daemonThreads("avo-inspector-send"),
                 new DropOldestBatch());
         sendExecutor.allowCoreThreadTimeOut(true);
@@ -145,7 +147,7 @@ class AvoBatcher {
             buffer.addLast(event);
             if (buffer.size() >= batchSize) {
                 sends = prepare(swap());
-            } else if (buffer.size() == 1 && timer != null) {
+            } else if (buffer.size() == 1 && timerEnabled) {
                 armTimer(generation);
             }
         }
@@ -202,9 +204,10 @@ class AvoBatcher {
             destroyed = true;
             buffer.clear();
             generation++;
-        }
-        if (timer != null) {
-            timer.shutdownNow();
+            if (pendingTimer != null) {
+                pendingTimer.cancel(false);
+                pendingTimer = null;
+            }
         }
         sendExecutor.shutdownNow();
         for (Future<AvoNetworkCallsHandler.SendResult> send : inFlight) {
@@ -224,7 +227,9 @@ class AvoBatcher {
     }
 
     boolean isTimerRunning() {
-        return timer != null && !timer.isShutdown();
+        synchronized (lock) {
+            return timerEnabled && !destroyed;
+        }
     }
 
     // Caller holds lock. The atomic swap-and-clear of SPEC.md §3.1.
@@ -238,7 +243,7 @@ class AvoBatcher {
     // Caller holds lock. One-shot flush of this buffer generation once its oldest event is due.
     private void armTimer(final long armedGeneration) {
         try {
-            timer.schedule(new Runnable() {
+            pendingTimer = sharedTimer.schedule(new Runnable() {
                 @Override
                 public void run() {
                     List<SendTask> sends;
@@ -252,7 +257,7 @@ class AvoBatcher {
                 }
             }, flushMillis, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException ignored) {
-            // Destroyed concurrently.
+            // The shared timer never shuts down; nothing to do if it ever refuses.
         }
     }
 
@@ -342,6 +347,12 @@ class AvoBatcher {
         } catch (ExecutionException | TimeoutException | CancellationException ignored) {
         }
         return null;
+    }
+
+    private static ScheduledThreadPoolExecutor newSharedTimer() {
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, daemonThreads("avo-inspector-flush-timer"));
+        executor.setRemoveOnCancelPolicy(true);
+        return executor;
     }
 
     static ThreadFactory daemonThreads(final String name) {
