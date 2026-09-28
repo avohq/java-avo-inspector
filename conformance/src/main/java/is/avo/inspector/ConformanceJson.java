@@ -121,6 +121,9 @@ final class ConformanceJson {
             if (c == '"') {
                 return result.toString();
             }
+            if (c < 0x20) {
+                throw error("unescaped control character in string");
+            }
             if (c != '\\') {
                 result.append(c);
                 continue;

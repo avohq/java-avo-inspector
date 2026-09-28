@@ -76,9 +76,12 @@ public final class ConformanceHarness {
             return configError(fixtureId, "unsupported operation: " + operation);
         }
 
-        String badField = firstNonString(asMap(envelope.get("constructor")), "apiKey", "env", "version", "appName");
-        if (badField != null) {
-            return configError(fixtureId, "constructor." + badField + " must be a string");
+        String constructorError = constructorError(asMap(envelope.get("constructor")));
+        if (constructorError != null) {
+            return configError(fixtureId, constructorError);
+        }
+        if (envelope.get("precondition") != null && !(envelope.get("precondition") instanceof Map)) {
+            return configError(fixtureId, "precondition must be an object");
         }
 
         AvoInspector inspector;
@@ -133,7 +136,7 @@ public final class ConformanceHarness {
                         records.put(record("track", (String) outcome[0], outcome[1]));
                     } else if ("trackN".equals(action)) {
                         Object count = step.get("count");
-                        if (!(count instanceof Long) || (Long) count < 1) {
+                        if (!isInt(count) || (Long) count < 1) {
                             return configError(fixtureId, "trackN requires an integer count >= 1");
                         }
                         trackN(inspector, (int) (long) (Long) count, string(step.get("eventNamePrefix"), ""),
@@ -181,6 +184,31 @@ public final class ConformanceHarness {
             builder.disableBatchTimer((Boolean) options.get("disableBatchTimer"));
         }
         return new AvoInspector(builder.build());
+    }
+
+    // The constructor fields construct() casts or narrows; JSON null passes through as absent.
+    private static String constructorError(Map<String, Object> options) {
+        String badField = firstNonString(options, "apiKey", "env", "version", "appName");
+        if (badField != null) {
+            return "constructor." + badField + " must be a string";
+        }
+        for (String key : new String[]{"batchSize", "maxQueueSize"}) {
+            if (options.get(key) != null && !isInt(options.get(key))) {
+                return "constructor." + key + " must be an integer";
+            }
+        }
+        if (options.get("batchFlushSeconds") != null && !(options.get("batchFlushSeconds") instanceof Number)) {
+            return "constructor.batchFlushSeconds must be a number";
+        }
+        if (options.get("disableBatchTimer") != null && !(options.get("disableBatchTimer") instanceof Boolean)) {
+            return "constructor.disableBatchTimer must be a boolean";
+        }
+        return null;
+    }
+
+    // An integer literal that fits in an int (ConformanceJson parses integer literals as Long or BigInteger).
+    private static boolean isInt(Object value) {
+        return value instanceof Long && (Long) value >= Integer.MIN_VALUE && (Long) value <= Integer.MAX_VALUE;
     }
 
     // The fields track() casts to String; JSON null passes through as null for the SDK to handle.

@@ -119,4 +119,43 @@ public class HarnessTests {
         assertEquals("float", envelope.getJSONArray("actual").getJSONObject(1).getString("propertyType"));
         assertEquals("float", envelope.getJSONArray("actual").getJSONObject(2).getString("propertyType"));
     }
+
+    @Test(timeout = 60_000)
+    public void aPreconditionThatIsNotAnObjectIsAConfigError() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"bad-precondition\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"},\"precondition\":[],\"input\":{}}", exitCode);
+
+        assertEquals(2, exitCode[0]);
+        assertEquals("precondition must be an object", new JSONObject(output).getString("error"));
+    }
+
+    @Test(timeout = 60_000)
+    public void integerOptionsThatDoNotFitAnIntAreConfigErrors() throws Exception {
+        String sequence = "{\"suite\":\"batching\",\"fixture_id\":\"narrowing\",\"operation\":\"sequence\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"prod\",\"version\":\"1.0.0\"%s},\"steps\":[%s]}";
+        String[][] cases = {
+                {",\"batchSize\":4294967297", "", "constructor.batchSize must be an integer"},
+                {",\"batchSize\":1.5", "", "constructor.batchSize must be an integer"},
+                {",\"maxQueueSize\":4294967297", "", "constructor.maxQueueSize must be an integer"},
+                {"", "{\"action\":\"trackN\",\"count\":4294967296}", "trackN requires an integer count >= 1"},
+        };
+        for (String[] c : cases) {
+            int[] exitCode = new int[1];
+            String output = runHarness(String.format(sequence, c[0], c[1]), exitCode);
+
+            assertEquals(c[2], 2, exitCode[0]);
+            assertEquals(c[2], new JSONObject(output).getString("error"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void anUnescapedControlCharacterInAStringIsAConfigError() throws Exception {
+        int[] exitCode = new int[1];
+        String output = runHarness("{\"suite\":\"schema-extraction\",\"fixture_id\":\"tab\","
+                + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"dev\",\"version\":\"1.0.0\"},\"input\":{\"a\\tb\":\"x\ty\"}}", exitCode);
+
+        assertEquals(2, exitCode[0]);
+        assertTrue(new JSONObject(output).getString("error").startsWith("could not parse input envelope"));
+    }
 }
