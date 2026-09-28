@@ -43,6 +43,10 @@ class AvoNetworkCallsHandler {
     // Test-only endpoint override for unit tests, which cannot set environment variables.
     @Nullable volatile String endpointForTesting;
 
+    // Test-only, for every handler in the JVM: the unit tests point it at a dead local port so no
+    // test can reach api.avo.app, whatever its env. Only code in this package can set it.
+    @Nullable static volatile String endpointForAllTests;
+
     // SPEC.md §7.7: last-write-wins; a volatile double write is atomic.
     volatile double samplingRate = 1.0;
 
@@ -60,6 +64,10 @@ class AvoNetworkCallsHandler {
         String override = endpointForTesting;
         if (override != null) {
             return override;
+        }
+        String testGuard = endpointForAllTests;
+        if (testGuard != null) {
+            return testGuard;
         }
         return resolveEndpoint(envName, System.getenv(MOCK_ENDPOINT_ENV_VAR));
     }
