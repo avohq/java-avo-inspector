@@ -171,6 +171,13 @@ class AvoBatcher {
         }
     }
 
+    // {hook registrations, hook removals}, read under the lock that guards the writes.
+    static int[] hookCountsForTesting() {
+        synchronized (busyBatchers) {
+            return new int[]{hookAddsForTesting, hookRemovalsForTesting};
+        }
+    }
+
     static boolean isShutdownHookInstalledForTesting() {
         synchronized (busyBatchers) {
             return shutdownHookInstalled;

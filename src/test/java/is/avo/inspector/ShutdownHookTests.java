@@ -161,19 +161,15 @@ public class ShutdownHookTests {
     public void backToBackSendsDoNotChurnTheShutdownHook() {
         AvoInspector inspector = new AvoInspector("test-key", "1.0.0", "App", AvoInspectorEnv.Dev);
         inspector.networkCallsHandler.endpointForTesting = server.url();
-        int adds;
-        int removals;
-        synchronized (AvoBatcher.class) {
-            adds = AvoBatcher.hookAddsForTesting;
-            removals = AvoBatcher.hookRemovalsForTesting;
-        }
+        int[] before = AvoBatcher.hookCountsForTesting();
         // Each dev event registers and then drains the batcher.
         for (int i = 0; i < 20; i++) {
             inspector.trackSchemaFromEvent("E" + i, Collections.<String, Object>emptyMap());
             inspector.flush();
         }
-        assertTrue("hook adds: " + (AvoBatcher.hookAddsForTesting - adds), AvoBatcher.hookAddsForTesting - adds <= 1);
-        assertEquals(0, AvoBatcher.hookRemovalsForTesting - removals);
+        int[] after = AvoBatcher.hookCountsForTesting();
+        assertTrue("hook adds: " + (after[0] - before[0]), after[0] - before[0] <= 1);
+        assertEquals(0, after[1] - before[1]);
 
         // destroy() with nothing left to flush removes it at once.
         inspector.destroy();
