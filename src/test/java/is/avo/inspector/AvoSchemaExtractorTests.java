@@ -165,10 +165,14 @@ public class AvoSchemaExtractorTests {
 
     @Test
     public void deepNestingIsTruncatedAtTenLevels() {
-        // SPEC.md §9.3.2: a self-referencing map must not overflow the stack.
-        Map<String, Object> cyclic = new LinkedHashMap<>();
-        cyclic.put("self", cyclic);
-        JSONArray wire = Util.remapProperties(extractor.extractSchema(cyclic, false));
+        // SPEC.md §9.3.2: 12 distinct nested maps, cut at 10 levels.
+        Map<String, Object> deep = new LinkedHashMap<>();
+        for (int i = 0; i < 12; i++) {
+            Map<String, Object> parent = new LinkedHashMap<>();
+            parent.put("child", deep);
+            deep = parent;
+        }
+        JSONArray wire = Util.remapProperties(extractor.extractSchema(deep, false));
 
         int depth = 0;
         JSONObject entry = wire.getJSONObject(0);
@@ -184,9 +188,13 @@ public class AvoSchemaExtractorTests {
     @Test
     public void listElementAtTheDepthCapIsTheTypeObject() {
         // SPEC.md §9.3.2, as in Go and C#: a list leaf past the cap is "object", not [].
-        List<Object> cyclic = new ArrayList<>();
-        cyclic.add(cyclic);
-        JSONArray wire = Util.remapProperties(extractor.extractSchema(props("v", cyclic), false));
+        List<Object> deep = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            List<Object> parent = new ArrayList<>();
+            parent.add(deep);
+            deep = parent;
+        }
+        JSONArray wire = Util.remapProperties(extractor.extractSchema(props("v", deep), false));
 
         JSONObject entry = wire.getJSONObject(0);
         assertEquals("list(object)", entry.getString("propertyType"));
@@ -200,6 +208,29 @@ public class AvoSchemaExtractorTests {
         }
         assertEquals("object", child);
         assertEquals(10, depth);
+    }
+
+    @Test(timeout = 5_000)
+    public void aMapThatHoldsItselfIsCutAtTheCycle() {
+        // Held under 10 keys, depth-capping alone would expand 10^10 nodes.
+        Map<String, Object> cyclic = new LinkedHashMap<>();
+        StringBuilder expected = new StringBuilder("[");
+        for (int i = 0; i < 10; i++) {
+            cyclic.put("k" + i, cyclic);
+            expected.append(i == 0 ? "" : ",").append("{propertyName:k").append(i).append(",propertyType:object,children:[]}");
+        }
+        assertWire(expected.append("]").toString(), cyclic);
+    }
+
+    @Test(timeout = 5_000)
+    public void aListThatHoldsItselfIsCutAtTheCycle() {
+        List<Object> cyclic = new ArrayList<>();
+        Map<String, Object> parent = props("l", cyclic);
+        cyclic.add(cyclic);
+        cyclic.add(parent);
+        cyclic.add(cyclic);
+        // The list itself and its parent map are ancestors: each is the type string "object", deduplicated.
+        assertWire("[{propertyName:l,propertyType:'list(object)',children:[object]}]", parent);
     }
 
     @Test

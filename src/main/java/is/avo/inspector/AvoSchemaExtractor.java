@@ -12,7 +12,9 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +35,7 @@ public class AvoSchemaExtractor {
 		if (eventProperties == null || eventProperties == JSONObject.NULL) {
 			result = new LinkedHashMap<>();
 		} else if (eventProperties instanceof Map || eventProperties instanceof JSONObject) {
-			result = mapObject(eventProperties, 0);
+			result = mapObject(eventProperties, 0, newAncestors(eventProperties));
 		} else {
 			result = extractSchemaFromObject(eventProperties);
 		}
@@ -67,25 +69,25 @@ public class AvoSchemaExtractor {
 
 	private AvoEventSchemaType getAvoSchemaType(Object eventProperties, Field eventPropertyField) {
 		try {
-			return objectToAvoType(eventPropertyField.get(eventProperties), 0);
+			return objectToAvoType(eventPropertyField.get(eventProperties), 0, newAncestors(eventProperties));
 		} catch (IllegalAccessException ignored) {
 			return new AvoEventSchemaType.AvoUnknownType();
 		}
 	}
 
 	// The object branch of mapping(): one entry per own property, in iteration order.
-	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth) {
+	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth, Set<Object> ancestors) {
 		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
 
 		if (object instanceof JSONObject) {
 			JSONObject json = (JSONObject) object;
 			for (Iterator<String> it = json.keys(); it.hasNext(); ) {
 				String key = it.next();
-				result.put(key, objectToAvoType(json.opt(key), depth));
+				result.put(key, objectToAvoType(json.opt(key), depth, ancestors));
 			}
 		} else {
 			for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
-				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth));
+				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth, ancestors));
 			}
 		}
 
@@ -93,8 +95,10 @@ public class AvoSchemaExtractor {
 	}
 
 	// The type of one property value, descending into objects and lists.
-	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth) {
-		if (isComplex(val) && depth >= MAX_DEPTH) {
+	// ancestors: the containers on the path to val, by identity. A container that is its own
+	// ancestor is cut like the depth cap, so a cycle can neither recurse nor expand exponentially.
+	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth, Set<Object> ancestors) {
+		if (isComplex(val) && (depth >= MAX_DEPTH || ancestors.contains(val))) {
 			return new AvoEventSchemaType.AvoTruncatedObject();
 		}
 
@@ -106,11 +110,21 @@ public class AvoSchemaExtractor {
 			if ("unknown".equals(elementType)) {
 				elementType = "object";
 			}
-			return new AvoEventSchemaType.AvoList(elementType, mapList(elements, depth + 1));
+			ancestors.add(val);
+			try {
+				return new AvoEventSchemaType.AvoList(elementType, mapList(elements, depth + 1, ancestors));
+			} finally {
+				ancestors.remove(val);
+			}
 		}
 
 		if (isObject(val)) {
-			return new AvoEventSchemaType.AvoObject(mapObject(val, depth + 1));
+			ancestors.add(val);
+			try {
+				return new AvoEventSchemaType.AvoObject(mapObject(val, depth + 1, ancestors));
+			} finally {
+				ancestors.remove(val);
+			}
 		}
 
 		return scalarType(val);
@@ -118,12 +132,12 @@ public class AvoSchemaExtractor {
 
 	// The array branch of mapping(): each element mapped, primitive types deduplicated by value.
 	// Objects and nested lists are never merged (reference identity in the JS reference parser).
-	private List<AvoEventSchemaType> mapList(@NotNull List<Object> elements, int depth) {
+	private List<AvoEventSchemaType> mapList(@NotNull List<Object> elements, int depth, Set<Object> ancestors) {
 		List<AvoEventSchemaType> result = new ArrayList<>();
 		Set<String> seenPrimitives = new HashSet<>();
 
 		for (Object element : elements) {
-			AvoEventSchemaType mapped = objectToAvoType(element, depth);
+			AvoEventSchemaType mapped = objectToAvoType(element, depth, ancestors);
 			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
 					|| mapped instanceof AvoEventSchemaType.AvoList;
 			if (nonPrimitive) {
@@ -134,6 +148,12 @@ public class AvoSchemaExtractor {
 		}
 
 		return result;
+	}
+
+	private static Set<Object> newAncestors(Object root) {
+		Set<Object> ancestors = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+		ancestors.add(root);
+		return ancestors;
 	}
 
 	// getBasicPropType(): a nested list counts as "object".
