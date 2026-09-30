@@ -100,6 +100,20 @@ public class AvoInspectorTests {
     }
 
     @Test
+    public void inspectorTargetRequiresAVersionLikeTheConstructor() {
+        String noVersion = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
+        for (String version : new String[]{null, "", "  ", " "}) {
+            try {
+                new AvoInspectorTarget("key", "App", version);
+                fail("expected the AvoInspectorTarget constructor to throw for " + version);
+            } catch (IllegalArgumentException e) {
+                assertEquals(noVersion, e.getMessage());
+            }
+        }
+        assertEquals("2.0.0", new AvoInspectorTarget("key", "App", "2.0.0").getAppVersion());
+    }
+
+    @Test
     public void inspectorTargetValidatesLikeTheConstructor() {
         String noKey = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
         String control = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";

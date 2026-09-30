@@ -12,8 +12,9 @@ public final class AvoInspectorTarget {
 
     /**
      * @throws IllegalArgumentException when {@code apiKey} is blank or contains a control character
-     *                                  other than tab, or {@code appName} is {@code null}; the
-     *                                  messages are the {@link AvoInspector} constructor's
+     *                                  other than tab, {@code appName} is {@code null}, or
+     *                                  {@code appVersion} is blank; the messages are the
+     *                                  {@link AvoInspector} constructor's
      */
     public AvoInspectorTarget(@NotNull String apiKey, @NotNull String appName, @NotNull String appVersion) {
         // apiKey travels in the api-key header, so it gets the constructor's checks (SPEC.md §4.1).
@@ -21,6 +22,11 @@ public final class AvoInspectorTarget {
         //noinspection ConstantConditions
         if (appName == null) {
             throw new IllegalArgumentException(NO_APP_NAME_MESSAGE);
+        }
+        // Like the constructor's version: a null appVersion on the wire is reserved for an event
+        // with an originHint and no originAppVersion (SPEC.md §7.3.6), which options still produce.
+        if (AvoInspector.isBlank(appVersion)) {
+            throw new IllegalArgumentException(AvoInspector.NO_VERSION_MESSAGE);
         }
         this.apiKey = apiKey;
         this.appName = appName;

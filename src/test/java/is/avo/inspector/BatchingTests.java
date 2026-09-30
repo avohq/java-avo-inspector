@@ -237,6 +237,20 @@ public class BatchingTests {
     }
 
     @Test
+    public void originHintWithoutOriginAppVersionSendsNullAppVersionForATarget() throws Exception {
+        // SPEC.md §7.3.6: a source-scoped event never carries a configured version, the target's included.
+        AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
+        inspector.trackSchemaFromEvent("P", NO_PROPS, new AvoInspectorTarget("other-key", "Other", "9.9.9"), null,
+                TrackOptions.builder().originHint("web").build());
+        inspector.flush();
+
+        JSONObject event = server.requests().get(0).body.getJSONObject(0);
+        assertTrue(event.has("appVersion"));
+        assertTrue(event.isNull("appVersion"));
+        assertEquals("web", event.getString("originHint"));
+    }
+
+    @Test
     public void gatewayOptionsAreResolvedPerEvent() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         Map<String, Object> props = Collections.<String, Object>singletonMap("a", 1);

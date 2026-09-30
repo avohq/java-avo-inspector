@@ -239,7 +239,8 @@ The SDK is safe to use from multiple threads.
   other than tab (for example CR, LF or NUL).
 - **`AvoInspectorTarget` validates its arguments.** Its constructor throws
   `IllegalArgumentException`, with the same messages, for an API key that is `null`, blank, or
-  contains a control character other than tab, and for a `null` app name.
+  contains a control character other than tab, for a `null` app name, and for an app version that
+  is `null`, empty or whitespace only.
 - **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
