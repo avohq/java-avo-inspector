@@ -230,6 +230,12 @@ with buffered events therefore stays alive until the process exits.
 `destroy()` stops the instance: buffered events are discarded unsent, in-flight requests are
 abandoned and later track calls do nothing.
 
+In a servlet container or any other environment that undeploys and redeploys your code, call
+`flush()` and then `destroy()` on every instance when your application stops (for example in a
+`ServletContextListener.contextDestroyed`). Otherwise the SDK keeps sending buffered events after
+undeploy, and its shutdown hook and threads keep the old class loader in memory for a few seconds
+after the last event is sent.
+
 The SDK is safe to use from multiple threads. Create one instance per API key and app, when your
 application starts, and share it; don't create an instance per request. Every instance's sends run
 on one shared pool of 16 daemon threads, and each instance runs at most 4 sends at once.

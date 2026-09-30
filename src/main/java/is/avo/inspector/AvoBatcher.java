@@ -114,12 +114,7 @@ class AvoBatcher {
     private static void registerForShutdownFlush(AvoBatcher batcher) {
         synchronized (busyBatchers) {
             if (!shutdownHookInstalled) {
-                Thread hook = new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        flushAllAtShutdown(AvoInspector.DEFAULT_FLUSH_TIMEOUT_MS);
-                    }
-                }, "avo-inspector-shutdown-flush");
+                Thread hook = new Thread(new ShutdownFlush(), "avo-inspector-shutdown-flush");
                 try {
                     Runtime.getRuntime().addShutdownHook(hook);
                     hookAddsForTesting++;
@@ -145,18 +140,31 @@ class AvoBatcher {
                 removeShutdownHookIfIdle();
             } else if (hookRemovalCheck == null) {
                 try {
-                    hookRemovalCheck = sharedTimer.schedule(new Runnable() {
-                        @Override
-                        public void run() {
-                            synchronized (busyBatchers) {
-                                hookRemovalCheck = null;
-                                removeShutdownHookIfIdle();
-                            }
-                        }
-                    }, HOOK_REMOVAL_DELAY_MS, TimeUnit.MILLISECONDS);
-                } catch (RejectedExecutionException e) {
+                    hookRemovalCheck = sharedTimer.schedule(new HookRemovalCheck(), HOOK_REMOVAL_DELAY_MS, TimeUnit.MILLISECONDS);
+                } catch (Throwable e) {
                     removeShutdownHookIfIdle();
                 }
+            }
+        }
+    }
+
+    private static final class ShutdownFlush implements Runnable {
+        @Override
+        public void run() {
+            flushAllAtShutdown(AvoInspector.DEFAULT_FLUSH_TIMEOUT_MS);
+        }
+    }
+
+    private static final class HookRemovalCheck implements Runnable {
+        @Override
+        public void run() {
+            try {
+                synchronized (busyBatchers) {
+                    hookRemovalCheck = null;
+                    removeShutdownHookIfIdle();
+                }
+            } catch (Throwable ignored) {
+                // Must not fail the shared timer thread.
             }
         }
     }
@@ -544,8 +552,27 @@ class AvoBatcher {
                 synchronized (sendQueueLock) {
                     running--;
                 }
-                pump();
+                try {
+                    pump();
+                } catch (Throwable e) {
+                    Util.logInternalError(e);
+                }
             }
+        }
+    }
+
+    private final class SendCall implements Callable<AvoNetworkCallsHandler.SendResult> {
+        private final String apiKey;
+        private final List<Map<String, Object>> events;
+
+        SendCall(String apiKey, List<Map<String, Object>> events) {
+            this.apiKey = apiKey;
+            this.events = events;
+        }
+
+        @Override
+        public AvoNetworkCallsHandler.SendResult call() {
+            return sender.send(events, apiKey);
         }
     }
 
@@ -554,13 +581,8 @@ class AvoBatcher {
         private final List<Map<String, Object>> events;
         int eventCount;
 
-        SendTask(final String apiKey, final List<Map<String, Object>> events) {
-            super(new Callable<AvoNetworkCallsHandler.SendResult>() {
-                @Override
-                public AvoNetworkCallsHandler.SendResult call() {
-                    return sender.send(events, apiKey);
-                }
-            });
+        SendTask(String apiKey, List<Map<String, Object>> events) {
+            super(new SendCall(apiKey, events));
             this.events = events;
             this.eventCount = events.size();
         }
@@ -639,5 +661,27 @@ class AvoBatcher {
                 return thread;
             }
         };
+    }
+
+    // Load and initialize, while the class loader is certainly open, every class the SDK's own
+    // threads (sends, timers, the drain and hook-removal paths, logging, serialization) may need
+    // later: a webapp undeployed without destroy() closes its class loader while they still run,
+    // and a class loaded after that fails with NoClassDefFoundError.
+    static {
+        Class<?>[] used = {
+                SendTask.class, SendCall.class, SendRunner.class, TimerFlush.class, TargetBuffer.class,
+                HookRemovalCheck.class, ShutdownFlush.class,
+                AvoLog.class, AvoLog.Channel.class, AvoLog.SummaryTask.class,
+                AvoNetworkCallsHandler.class, AvoNetworkCallsHandler.SendResult.class, AvoNetworkCallsHandler.Disconnect.class,
+                Util.class, AvoInspector.class,
+                org.json.JSONObject.class, org.json.JSONArray.class, org.json.JSONString.class, org.json.JSONException.class,
+        };
+        for (Class<?> type : used) {
+            try {
+                Class.forName(type.getName(), true, type.getClassLoader());
+            } catch (Throwable ignored) {
+                // Best effort.
+            }
+        }
     }
 }

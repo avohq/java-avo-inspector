@@ -92,6 +92,10 @@ test {
     environment 'AVO_INSPECTOR_MOCK_ENDPOINT', 'http://127.0.0.1:1'
     dependsOn 'conformanceClasses'
     inputs.files(sourceSets.conformance.output)
+    // RedeployTests loads the built SDK jar into its own class loader.
+    dependsOn 'jar'
+    inputs.files(tasks.named('jar'))
+    systemProperty 'avo.sdk.jar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
     systemProperty 'avo.conformance.classpath', sourceSets.conformance.output.classesDirs.asPath
 }
 

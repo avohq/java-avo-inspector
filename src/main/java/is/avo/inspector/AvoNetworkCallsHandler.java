@@ -132,13 +132,7 @@ class AvoNetworkCallsHandler {
             if (aborted) {
                 return SendResult.FAILED;
             }
-            deadline = watchdog.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    timedOut.set(true);
-                    finalConnection.disconnect();
-                }
-            }, TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            deadline = watchdog.schedule(new Disconnect(finalConnection, timedOut), TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(TIMEOUT_MS);
@@ -201,6 +195,23 @@ class AvoNetworkCallsHandler {
             if (value >= 0.0 && value <= 1.0) {
                 samplingRate = value;
             }
+        }
+    }
+
+    // The 10 s request budget: disconnects a request still running when it expires.
+    static final class Disconnect implements Runnable {
+        private final HttpURLConnection connection;
+        private final AtomicBoolean timedOut;
+
+        Disconnect(HttpURLConnection connection, AtomicBoolean timedOut) {
+            this.connection = connection;
+            this.timedOut = timedOut;
+        }
+
+        @Override
+        public void run() {
+            timedOut.set(true);
+            connection.disconnect();
         }
     }
 
