@@ -315,22 +315,15 @@ public class AvoInspector implements Inspector {
         return batcher.enqueue(event);
     }
 
+    // Logs the schema as the JSON sent on the wire (eventProperties), so nested children read
+    // cleanly. toString() keeps its 1.1.1 form and is not used here.
     static void logPostExtract(@Nullable String eventName, @NotNull Map<String, AvoEventSchemaType> eventSchema) {
         if (isLogging()) {
-            StringBuilder schemaString = new StringBuilder();
-
-            for (String key : eventSchema.keySet()) {
-                AvoEventSchemaType value = eventSchema.get(key);
-                if (value != null) {
-                    String entry = "\t\"" + key + "\": \"" + value.getReadableName() + "\";\n";
-                    schemaString.append(entry);
-                }
-            }
-
+            String schemaJson = Util.remapProperties(eventSchema).toString();
             if (eventName != null) {
-                System.out.println("Avo Inspector: Queued event " + eventName + " with schema {\n" + schemaString + "}");
+                System.out.println("Avo Inspector: Queued event " + eventName + " with schema " + schemaJson);
             } else {
-                System.out.println("Avo Inspector: Parsed schema {\n" + schemaString + "}");
+                System.out.println("Avo Inspector: Parsed schema " + schemaJson);
             }
         }
     }

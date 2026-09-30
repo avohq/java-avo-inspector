@@ -154,6 +154,49 @@ public class LoggingTests {
     }
 
     @Test
+    public void loggedSchemasAreValidJson() throws Exception {
+        Map<String, Object> props = new java.util.LinkedHashMap<>();
+        props.put("l", java.util.Arrays.asList(1, "a"));
+        props.put("o", Collections.<String, Object>singletonMap("n", 1.5));
+        props.put("s", "x");
+        JSONArrayAssert expected = new JSONArrayAssert(Util.remapProperties(new AvoSchemaExtractor().extractSchema(props, false)));
+
+        AvoInspector inspector = inspector(AvoInspectorEnv.Staging);
+        AvoInspector.enableLogging(true);
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true, "UTF-8"));
+        try {
+            inspector.trackSchemaFromEvent("Event", props);
+            inspector.extractSchema(props);
+        } finally {
+            System.setOut(originalOut);
+        }
+        String stdout = new String(out.toByteArray(), StandardCharsets.UTF_8);
+
+        expected.assertLogged(stdout, "Avo Inspector: Queued event Event with schema ");
+        expected.assertLogged(stdout, "Avo Inspector: Parsed schema ");
+        assertFalse(stdout, stdout.contains("list(int)[\"int\""));
+    }
+
+    // The schema logged after a prefix must be JSON equal to the wire eventProperties.
+    private static final class JSONArrayAssert {
+        final org.json.JSONArray expected;
+
+        JSONArrayAssert(org.json.JSONArray expected) {
+            this.expected = expected;
+        }
+
+        void assertLogged(String output, String prefix) {
+            int start = output.indexOf(prefix);
+            assertTrue(output, start >= 0);
+            int end = output.indexOf('\n', start);
+            String json = output.substring(start + prefix.length(), end < 0 ? output.length() : end);
+            assertTrue("logged: " + json, expected.similar(new org.json.JSONArray(json)));
+        }
+    }
+
+    @Test
     public void batchSizeAboveMaxQueueSizeAlwaysWarnsAndIsNotClamped() {
         AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
                 .env(AvoInspectorEnv.Prod).batchSize(30).maxQueueSize(2).build());
