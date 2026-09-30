@@ -61,6 +61,14 @@ final class AvoLog {
         }
     }
 
+    /** A streamId containing ':' (warned on every call before; now once per window). */
+    static void streamIdColon() {
+        long total = due("streamid-colon", 1);
+        if (total > 0) {
+            System.err.println("Avo Inspector: streamId contains ':'; using the value verbatim." + more(total));
+        }
+    }
+
     static void resetForTesting() {
         synchronized (windows) {
             windows.clear();

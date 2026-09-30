@@ -289,7 +289,7 @@ public class AvoInspector implements Inspector {
             streamId = "";
         } else if (streamId.indexOf(':') >= 0) {
             // SPEC.md §4.2: warn, but send the value unchanged.
-            warn("streamId contains ':'; using the value verbatim.");
+            AvoLog.streamIdColon();
         }
 
         // SPEC.md §7.7: sample each event at enqueue; the body carries the rate that governed it.

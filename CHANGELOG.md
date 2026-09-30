@@ -35,7 +35,7 @@ Delivery and robustness:
 - **Logging never changes whether an event is tracked.** A property whose `toString()` throws no longer makes a dev track call throw from the log line.
 - **Nothing escapes a track call outside dev**, not even an `Error` such as `StackOverflowError` raised while handling an event: the call logs it and returns an empty schema. In dev it is rethrown as the documented `RuntimeException`. An interrupt raised inside the SDK leaves the thread's interrupt flag set.
 - **The sampling rate changes only on a 200 that carries a numeric `samplingRate` in [0, 1].** A `{"success":false}` response no longer throws on the send thread.
-- **Failed sends, dropped events, non-200 responses and internal errors are always printed to stderr**, whatever `enableLogging`, each kind at most once every 10 seconds, the count of what was suppressed carried into the next line (the same rule as the Node and Go SDKs, with no timer); the API key and request bodies are never logged. The dev log line "Saved event" is now "Queued event", printed only for events that pass sampling, with the schema as the JSON sent on the wire.
+- **Failed sends, dropped events, non-200 responses and internal errors are always printed to stderr**, whatever `enableLogging`, each kind at most once every 10 seconds, the count of what was suppressed carried into the next line (the same rule as the Node and Go SDKs, with no timer); the `:`-in-stream-id warning is limited the same way; the API key and request bodies are never logged. The dev log line "Saved event" is now "Queued event", printed only for events that pass sampling, with the schema as the JSON sent on the wire.
 
 Build:
 

@@ -305,8 +305,9 @@ avoInspector.flush();
   - internal errors (`Avo Inspector: something went wrong...`);
   - dropped events (`dropped N event(s) (queue full)` or `(send backlog full)`) and non-200
     responses (`N batch(es) rejected with HTTP <status>`);
-  - warnings: invalid env, a `:` in a stream id, invalid batch options, and `batchSize` larger
-    than `maxQueueSize`.
+  - the warning for a stream id containing `:`;
+  - configuration warnings: invalid env, invalid batch options, and `batchSize` larger than
+    `maxQueueSize`.
 
   Each kind of message (per drop reason, HTTP status and failure) is printed at most once every 10
   seconds: the first occurrence at once, later ones counted and included in the next line after

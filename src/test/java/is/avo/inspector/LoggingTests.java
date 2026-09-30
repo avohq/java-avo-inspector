@@ -236,6 +236,21 @@ public class LoggingTests {
     }
 
     @Test
+    public void theStreamIdColonWarningIsRateLimited() {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        for (int i = 0; i < 5; i++) {
+            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap(), "user:42", null);
+        }
+        assertEquals(stderr(), 1, count(stderr(), "streamId contains ':'"));
+        assertFalse(stderr(), stderr().contains("more in the last"));
+
+        pastTheWindow();
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap(), "user:42", null);
+        assertTrue(stderr(), stderr().contains("streamId contains ':'; using the value verbatim. (4 more in the last 10s)"));
+        assertFalse(stderr(), stderr().contains("user:42"));
+    }
+
+    @Test
     public void samplingDropsPrintNothingWithLoggingOff() {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.setSamplingRateForTesting(0.0);
