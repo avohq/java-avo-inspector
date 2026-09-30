@@ -260,7 +260,8 @@ public class AvoInspector implements Inspector {
 
             return schema;
 
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Errors too: nothing the SDK does may escape a track call outside dev (SPEC.md §4.2).
             handleException(e, AvoInspector.this.env);
             return new LinkedHashMap<>();
         }
@@ -279,7 +280,8 @@ public class AvoInspector implements Inspector {
         }
         try {
             trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, null, null);
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Errors too: nothing the SDK does may escape a track call outside dev (SPEC.md §4.2).
             handleException(e, AvoInspector.this.env);
         }
     }
@@ -334,6 +336,7 @@ public class AvoInspector implements Inspector {
         try {
             return avoSchemaExtractor.extractSchema(eventProperties, true);
         } catch (Throwable e) {
+            Util.restoreInterrupt(e);
             Util.logInternalError(e);
             return new LinkedHashMap<>();
         }
@@ -358,6 +361,7 @@ public class AvoInspector implements Inspector {
         try {
             batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
         } catch (Throwable e) {
+            Util.restoreInterrupt(e);
             Util.logInternalError(e);
         }
     }

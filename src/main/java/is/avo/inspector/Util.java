@@ -215,6 +215,16 @@ class Util {
 
     static final String INTERNAL_ERROR_MESSAGE = "Avo Inspector: something went wrong. Please report to support@avo.app.";
 
+    // A caught InterruptedException must leave the thread interrupted; ThreadDeath is rethrown.
+    static void restoreInterrupt(Throwable e) {
+        if (e instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        if (e instanceof ThreadDeath) {
+            throw (ThreadDeath) e;
+        }
+    }
+
     // An internal error on the SDK's own threads: always logged, never thrown (there is no caller).
     static void logInternalError(Throwable e) {
         AvoLog.INTERNAL_ERRORS.report(INTERNAL_ERROR_MESSAGE + " " + e, 1);
@@ -222,6 +232,7 @@ class Util {
 
     // SPEC.md §4.2 / §7.5: an internal error is always logged; in dev it is rethrown to the caller.
     static void handleException(Throwable e, String envName) {
+        restoreInterrupt(e);
         logInternalError(e);
         if (AvoInspectorEnv.Dev.getName().equals(envName)) {
             throw new RuntimeException(INTERNAL_ERROR_MESSAGE, e);

@@ -208,6 +208,58 @@ public class AvoInspectorTests {
         assertEquals(1, inspector.extractSchema(props).size());
     }
 
+    private static Map<String, Object> throwingMap(final Throwable error) {
+        return new java.util.AbstractMap<String, Object>() {
+            @Override
+            public java.util.Set<Entry<String, Object>> entrySet() {
+                sneakyThrow(error);
+                return null;
+            }
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable error) throws T {
+        throw (T) error;
+    }
+
+    @Test
+    public void errorsNeverEscapeTrackOutsideDev() {
+        AvoInspector prod = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Prod));
+        assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new StackOverflowError())).isEmpty());
+        assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new NoClassDefFoundError("x")), "s", null).isEmpty());
+        prod.trackSchema("Event", new java.util.AbstractMap<String, AvoEventSchemaType>() {
+            @Override
+            public java.util.Set<Entry<String, AvoEventSchemaType>> entrySet() {
+                throw new StackOverflowError();
+            }
+        });
+        assertTrue(prod.extractSchema(throwingMap(new StackOverflowError())).isEmpty());
+    }
+
+    @Test
+    public void errorsInDevBecomeTheDocumentedRuntimeException() {
+        AvoInspector dev = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Dev));
+        try {
+            dev.trackSchemaFromEvent("Event", throwingMap(new StackOverflowError()));
+            fail("expected a rethrow in dev");
+        } catch (RuntimeException e) {
+            assertEquals("Avo Inspector: something went wrong. Please report to support@avo.app.", e.getMessage());
+            assertTrue(e.getCause() instanceof StackOverflowError);
+        }
+    }
+
+    @Test
+    public void anInterruptInsideTheSdkKeepsTheInterruptFlag() {
+        AvoInspector prod = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Prod));
+        try {
+            assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new InterruptedException())).isEmpty());
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     @Test
     public void internalErrorInDevRethrowsTheSpecMessage() {
         AvoInspector inspector = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Dev));

@@ -277,7 +277,8 @@ avoInspector.flush();
 - **Track methods never return an empty result because of the HTTP response.** They return the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
   non-200. The returned map now keeps the input's property order.
-- **Internal errors throw in dev and are swallowed in staging and prod.** In dev a track call
+- **Internal errors throw in dev and are swallowed in staging and prod**, including `Error`s such
+  as `StackOverflowError` raised while handling an event. In dev a track call
   throws a `RuntimeException` with the message
   `Avo Inspector: something went wrong. Please report to support@avo.app.`; in staging and prod it
   returns an empty map. In every env the error is now printed to stderr. `extractSchema` no
