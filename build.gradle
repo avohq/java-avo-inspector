@@ -12,7 +12,9 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.jetbrains:annotations:23.0.0'
+    // CLASS-retention annotations: needed to compile, never at runtime, so not published.
+    compileOnly 'org.jetbrains:annotations:23.0.0'
+    testCompileOnly 'org.jetbrains:annotations:23.0.0'
     api 'org.json:json:20220320'
 
     testImplementation 'junit:junit:4.13.2'

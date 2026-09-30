@@ -35,3 +35,4 @@ Delivery and robustness:
 Build:
 
 - Built with Gradle 8.12 and compiled for Java 8 (`--release 8` on newer JDKs). The JUnit 4 tests now actually run.
+- **`org.jetbrains:annotations` is no longer a runtime dependency.** Its annotations are only needed to compile the SDK, so the published POM lists just `org.json`.
