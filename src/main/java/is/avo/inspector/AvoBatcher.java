@@ -266,8 +266,7 @@ class AvoBatcher {
         }
 
         if (dropped > 0) {
-            AvoLog.DROPPED_EVENTS.report("Avo Inspector: maxQueueSize (" + maxQueueSize + ") exceeded; dropped "
-                    + dropped + " oldest buffered event(s).", dropped);
+            AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
         }
         Runnable afterSwap = afterSwapForTesting;
         if (sends != null && afterSwap != null) {
@@ -503,8 +502,7 @@ class AvoBatcher {
             }
         }
         if (dropped > 0) {
-            AvoLog.DROPPED_EVENTS.report("Avo Inspector: sends waiting to be sent exceed " + allowance
-                    + " events; dropped " + dropped + " oldest event(s).", dropped);
+            AvoLog.dropped(dropped, AvoLog.SEND_BACKLOG_FULL);
         }
         pump();
         return new ArrayList<Future<AvoNetworkCallsHandler.SendResult>>(sends);
@@ -627,16 +625,6 @@ class AvoBatcher {
         return pool;
     }
 
-    // Runs a task on the shared timer; false if it could not be scheduled.
-    static boolean scheduleShared(Runnable task, long delayNanos) {
-        try {
-            sharedTimer.schedule(task, Math.max(0L, delayNanos), TimeUnit.NANOSECONDS);
-            return true;
-        } catch (Throwable e) {
-            return false;
-        }
-    }
-
     private static ScheduledThreadPoolExecutor newSharedTimer() {
         return newSharedScheduler("avo-inspector-flush-timer");
     }
@@ -671,7 +659,7 @@ class AvoBatcher {
         Class<?>[] used = {
                 SendTask.class, SendCall.class, SendRunner.class, TimerFlush.class, TargetBuffer.class,
                 HookRemovalCheck.class, ShutdownFlush.class,
-                AvoLog.class, AvoLog.Channel.class, AvoLog.SummaryTask.class,
+                AvoLog.class,
                 AvoNetworkCallsHandler.class, AvoNetworkCallsHandler.SendResult.class, AvoNetworkCallsHandler.Disconnect.class,
                 Util.class, AvoInspector.class,
                 org.json.JSONObject.class, org.json.JSONArray.class, org.json.JSONString.class, org.json.JSONException.class,

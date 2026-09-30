@@ -34,12 +34,26 @@ public class LoggingTests {
         captured = new ByteArrayOutputStream();
         System.setErr(new PrintStream(captured, true, "UTF-8"));
         AvoLog.resetForTesting();
+        now = 0;
+        AvoLog.clockForTesting = new AvoLog.Clock() {
+            @Override
+            public long nanoTime() {
+                return now;
+            }
+        };
+    }
+
+    // The limiter's clock, stepped by the tests instead of sleeping.
+    private volatile long now;
+
+    private void pastTheWindow() {
+        now += java.util.concurrent.TimeUnit.SECONDS.toNanos(11);
     }
 
     @After
     public void tearDown() {
         System.setErr(originalErr);
-        AvoLog.windowMsForTesting = 0;
+        AvoLog.clockForTesting = null;
         AvoLog.resetForTesting();
         for (AvoInspector inspector : inspectors) {
             inspector.destroy();
@@ -115,43 +129,94 @@ public class LoggingTests {
         return n;
     }
 
-    @Test(timeout = 20_000)
-    public void non200IsAlwaysLoggedAndRateLimited() throws Exception {
-        AvoLog.windowMsForTesting = 500;
-        server.respond(500, "{}");
-        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+    @Test
+    public void aQueueFullBurstLogsOneLineThenTheCarriedCount() throws Exception {
+        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
+                .env(AvoInspectorEnv.Prod).batchSize(1000).maxQueueSize(1).disableBatchTimer(true).build());
+        inspectors.add(inspector);
+        AvoInspector.enableLogging(false);
+        captured.reset();
 
+        for (int i = 0; i < 20; i++) {
+            inspector.trackSchemaFromEvent("Event", Collections.singletonMap("email", "alice@example.com"));
+        }
+        assertEquals(stderr(), "Avo Inspector: dropped 1 event(s) (queue full) in the last 10s.\n", stderr());
+
+        pastTheWindow();
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        assertTrue(stderr(), stderr().endsWith("Avo Inspector: dropped 19 event(s) (queue full) in the last 10s.\n"));
+        assertFalse(stderr().contains(API_KEY));
+        assertFalse(stderr().contains("alice@example.com"));
+    }
+
+    @Test
+    public void aBacklogOverflowReportsItsWholeCountInTheFirstLine() {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AvoBatcher.maxWaitingEvents = 2;
+        AvoBatcher batcher = new AvoBatcher(new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(java.util.List<Map<String, Object>> events, String apiKey) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        }, 10, 30, 1000, true);
+        try {
+            // 4 sends of 10 run; the fifth batch of 10 exceeds the backlog of 2 by 8.
+            for (int i = 0; i < 50; i++) {
+                batcher.enqueue(AvoBatcherTests.event("E" + i));
+            }
+            assertEquals(stderr(), "Avo Inspector: dropped 8 event(s) (send backlog full) in the last 10s.\n", stderr());
+        } finally {
+            AvoBatcher.maxWaitingEvents = AvoBatcher.MAX_WAITING_EVENTS;
+            release.countDown();
+            batcher.destroy();
+        }
+    }
+
+    @Test
+    public void non200IsLoggedOncePerStatusPerWindow() throws Exception {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        server.respond(500, "{}");
         for (int i = 0; i < 5; i++) {
             inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
             inspector.flush();
         }
-        assertEquals(5, server.requests().size());
-        assertEquals(stderr(), 1, count(stderr(), "status 500"));
+        server.respond(400, "{}");
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 1 batch(es) rejected with HTTP 500 in the last 10s."));
+        assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 1 batch(es) rejected with HTTP 400 in the last 10s."));
 
-        Thread.sleep(1200);
-        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more non-200 response(s)"));
+        pastTheWindow();
+        server.respond(500, "{}");
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        assertTrue(stderr(), stderr().contains("Avo Inspector: 5 batch(es) rejected with HTTP 500 in the last 10s."));
         assertFalse(stderr().contains(API_KEY));
     }
 
-    @Test(timeout = 20_000)
-    public void failedSendsAreRateLimited() throws Exception {
-        AvoLog.windowMsForTesting = 500;
+    @Test
+    public void failedSendsLogOneLinePerWindowWithTheSuppressedCount() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.networkCallsHandler.endpointForTesting = closedPortUrl();
-
         for (int i = 0; i < 5; i++) {
             inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
             inspector.flush();
         }
-        assertEquals(stderr(), 1, count(stderr(), "schema sending failed: Request failed."));
+        assertEquals(stderr(), "Avo Inspector: schema sending failed: Request failed.\n", stderr());
 
-        Thread.sleep(1200);
-        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more failed send(s)"));
+        pastTheWindow();
+        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.flush();
+        assertTrue(stderr(), stderr().endsWith("Avo Inspector: schema sending failed: Request failed. (4 more in the last 10s)\n"));
     }
 
-    @Test(timeout = 20_000)
-    public void internalErrorsAreRateLimited() throws Exception {
-        AvoLog.windowMsForTesting = 500;
+    @Test
+    public void internalErrorsLogOneLinePerWindowWithTheSuppressedCount() {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         Map<String, Object> broken = new java.util.AbstractMap<String, Object>() {
             @Override
@@ -159,32 +224,25 @@ public class LoggingTests {
                 throw new IllegalStateException("boom");
             }
         };
-
         for (int i = 0; i < 5; i++) {
             inspector.trackSchemaFromEvent("Event", broken);
         }
         assertEquals(stderr(), 1, count(stderr(), "something went wrong"));
 
-        Thread.sleep(1200);
-        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more internal error(s)"));
+        pastTheWindow();
+        inspector.trackSchemaFromEvent("Event", broken);
+        assertTrue(stderr(), stderr().contains(
+                "Avo Inspector: something went wrong. Please report to support@avo.app. (4 more in the last 10s) java.lang.IllegalStateException: boom"));
     }
 
-    @Test(timeout = 20_000)
-    public void droppedEventsAreAlwaysLoggedAndRateLimited() throws Exception {
-        AvoLog.windowMsForTesting = 500;
-        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
-                .env(AvoInspectorEnv.Prod).maxQueueSize(1).disableBatchTimer(true).build());
-        inspectors.add(inspector);
-        AvoInspector.enableLogging(false);
-        captured.reset();
-
-        for (int i = 0; i < 20; i++) {
+    @Test
+    public void samplingDropsPrintNothingWithLoggingOff() {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        inspector.setSamplingRateForTesting(0.0);
+        for (int i = 0; i < 10; i++) {
             inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
         }
-        assertEquals(stderr(), 1, count(stderr(), "dropped 1 oldest"));
-
-        Thread.sleep(1200);
-        assertTrue(stderr(), stderr().contains("Avo Inspector: 18 more event(s) dropped"));
+        assertEquals("", stderr());
     }
 
     @Test

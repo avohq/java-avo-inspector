@@ -1,111 +1,89 @@
 package is.avo.inspector;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-// Messages printed whatever the logging flag, each kind at most once per window: the first
-// occurrence in a window is printed, later ones are counted and summed up in one line when the
-// window ends. No message includes the API key or a request body (SPEC.md §7.5.1).
+// Lines about lost data and failed sends, written to stderr whatever the logging flag (the
+// cross-SDK logging rule, shared with Node and Go). Each kind (per drop reason, HTTP status or
+// failure text) prints at most one line per 10 s: the first occurrence prints at once, later ones
+// in the window are counted and reported with the next line after it. There is no timer, so
+// nothing here keeps a thread alive. No line includes the API key or a property value.
 final class AvoLog {
 
-    static final long WINDOW_MS = 10_000;
-    // Test-only: a shorter window.
-    static volatile long windowMsForTesting = 0;
+    private static final long WINDOW_NANOS = TimeUnit.SECONDS.toNanos(10);
 
-    static final Channel DROPPED_EVENTS = new Channel("event(s) dropped");
-    static final Channel NON_200 = new Channel("non-200 response(s)");
-    static final Channel SEND_FAILED = new Channel("failed send(s)");
-    static final Channel INTERNAL_ERRORS = new Channel("internal error(s)");
+    static final String QUEUE_FULL = "queue full";
+    static final String SEND_BACKLOG_FULL = "send backlog full";
+
+    interface Clock {
+        long nanoTime();
+    }
+
+    // Test-only clock.
+    static volatile Clock clockForTesting;
+
+    // Guarded by itself: per key, {start of the current window, count suppressed in it}.
+    private static final Map<String, long[]> windows = new HashMap<>();
 
     private AvoLog() {
     }
 
+    /** Events dropped because the unsent buffer ({@link #QUEUE_FULL}) or the send backlog is full. */
+    static void dropped(long count, String reason) {
+        long total = due("dropped:" + reason, count);
+        if (total > 0) {
+            System.err.println("Avo Inspector: dropped " + total + " event(s) (" + reason + ") in the last 10s.");
+        }
+    }
+
+    /** A batch answered with an HTTP status other than 200. Only the status is logged. */
+    static void rejected(int status) {
+        long total = due("non200:" + status, 1);
+        if (total > 0) {
+            System.err.println("Avo Inspector: " + total + " batch(es) rejected with HTTP " + status + " in the last 10s.");
+        }
+    }
+
+    /** A batch that could not be sent (network error, timeout, header guard). */
+    static void failed(String reason) {
+        long total = due("failed:" + reason, 1);
+        if (total > 0) {
+            System.err.println("Avo Inspector: schema sending failed: " + reason + "." + more(total));
+        }
+    }
+
+    /** An internal error; the error is appended to the line. */
+    static void internal(Throwable error) {
+        long total = due("internal", 1);
+        if (total > 0) {
+            System.err.println(Util.INTERNAL_ERROR_MESSAGE + more(total) + " " + error);
+        }
+    }
+
     static void resetForTesting() {
-        for (Channel channel : new Channel[]{DROPPED_EVENTS, NON_200, SEND_FAILED, INTERNAL_ERRORS}) {
-            channel.reset();
+        synchronized (windows) {
+            windows.clear();
         }
     }
 
-    private static long windowNanos() {
-        long override = windowMsForTesting;
-        return TimeUnit.MILLISECONDS.toNanos(override > 0 ? override : WINDOW_MS);
-    }
-
-    static final class Channel {
-        private final String summaryUnit;
-        // Guarded by this.
-        private boolean windowOpen;
-        private long windowStart;
-        private long suppressed;
-        private boolean summaryScheduled;
-
-        Channel(String summaryUnit) {
-            this.summaryUnit = summaryUnit;
-        }
-
-        /** Prints line, or counts {@code count} toward the next summary if this window already printed. */
-        void report(String line, long count) {
-            String print = null;
-            synchronized (this) {
-                long now = System.nanoTime();
-                if (!windowOpen || now - windowStart >= windowNanos()) {
-                    windowOpen = true;
-                    windowStart = now;
-                    print = line;
-                } else {
-                    suppressed += count;
-                    if (!summaryScheduled) {
-                        summaryScheduled = true;
-                        long delay = windowStart + windowNanos() - now;
-                        if (!AvoBatcher.scheduleShared(new SummaryTask(this), delay)) {
-                            summaryScheduled = false;
-                        }
-                    }
-                }
+    // Counts amount for key. Returns the total to print (this amount plus what the previous window
+    // counted) when a line is due, or 0 while the window is open.
+    private static long due(String key, long amount) {
+        Clock clock = clockForTesting;
+        long now = clock != null ? clock.nanoTime() : System.nanoTime();
+        synchronized (windows) {
+            long[] window = windows.get(key);
+            if (window != null && now - window[0] < WINDOW_NANOS) {
+                window[1] += amount;
+                return 0;
             }
-            if (print != null) {
-                System.err.println(print);
-            }
-        }
-
-        void summarize() {
-            String print = null;
-            synchronized (this) {
-                summaryScheduled = false;
-                if (suppressed > 0) {
-                    print = "Avo Inspector: " + suppressed + " more " + summaryUnit + " in the last "
-                            + TimeUnit.NANOSECONDS.toSeconds(windowNanos()) + " s.";
-                    suppressed = 0;
-                    windowOpen = true;
-                    windowStart = System.nanoTime();
-                }
-            }
-            if (print != null) {
-                System.err.println(print);
-            }
-        }
-
-        synchronized void reset() {
-            windowOpen = false;
-            suppressed = 0;
-            summaryScheduled = false;
+            windows.put(key, new long[]{now, 0});
+            return amount + (window != null ? window[1] : 0);
         }
     }
 
-    // A named class, loaded with AvoLog, so no class is loaded late on the SDK's threads.
-    static final class SummaryTask implements Runnable {
-        private final Channel channel;
-
-        SummaryTask(Channel channel) {
-            this.channel = channel;
-        }
-
-        @Override
-        public void run() {
-            try {
-                channel.summarize();
-            } catch (Throwable ignored) {
-                // Logging must never fail the SDK's threads.
-            }
-        }
+    private static String more(long total) {
+        return total > 1 ? " (" + (total - 1) + " more in the last 10s)" : "";
     }
 }

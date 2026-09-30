@@ -116,10 +116,10 @@ class AvoNetworkCallsHandler {
             }
         }
 
-        return post(body, headers, events.size());
+        return post(body, headers);
     }
 
-    private SendResult post(byte[] body, Map<String, String> headers, int eventCount) {
+    private SendResult post(byte[] body, Map<String, String> headers) {
         HttpURLConnection connection = null;
         final AtomicBoolean timedOut = new AtomicBoolean(false);
         ScheduledFuture<?> deadline = null;
@@ -156,9 +156,8 @@ class AvoNetworkCallsHandler {
             int responseCode = connection.getResponseCode();
             if (responseCode != HttpURLConnection.HTTP_OK) {
                 drain(connection.getErrorStream());
-                // Always reported, at most once per window; never the key or the body.
-                AvoLog.NON_200.report("Avo Inspector: Inspector API returned status " + responseCode + "; "
-                        + eventCount + " event(s) not stored.", 1);
+                // Always reported, at most once per status and window; never the key or the body.
+                AvoLog.rejected(responseCode);
                 return SendResult.NON_200;
             }
 
@@ -278,7 +277,7 @@ class AvoNetworkCallsHandler {
     // here it never includes the apiKey or the request body (SPEC.md §7.5.1).
     private SendResult failed(String reason) {
         if (!aborted) {
-            AvoLog.SEND_FAILED.report("Avo Inspector: schema sending failed: " + reason + ".", 1);
+            AvoLog.failed(reason);
         }
         return SendResult.FAILED;
     }

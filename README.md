@@ -249,8 +249,9 @@ about 4 × `batchSize` events per round trip to the Inspector API: with the defa
 busy wait their turn, and up to 10,000 events can wait. Beyond that the oldest waiting events are
 dropped. `maxQueueSize` bounds only the events not yet in a batch.
 
-Dropped events are always reported on stderr, whatever `enableLogging`, at most one line every 10
-seconds with the number dropped since the last line; so are non-200 responses. If you see drops:
+Dropped events are always reported on stderr, whatever `enableLogging`, for example
+`Avo Inspector: dropped 8 event(s) (send backlog full) in the last 10s.` (or `queue full` when
+`maxQueueSize` is exceeded); so are non-200 responses. If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
 - in a backfill or import script that tracks faster than that, call `flush()` every few thousand
@@ -302,13 +303,15 @@ avoInspector.flush();
   - a send that fails because of a network error, a timeout, or an API key the header check
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
   - internal errors (`Avo Inspector: something went wrong...`);
-  - dropped events (`maxQueueSize` exceeded, or too many events waiting to be sent) and non-200
-    responses;
+  - dropped events (`dropped N event(s) (queue full)` or `(send backlog full)`) and non-200
+    responses (`N batch(es) rejected with HTTP <status>`);
   - warnings: invalid env, a `:` in a stream id, invalid batch options, and `batchSize` larger
     than `maxQueueSize`.
 
-  Each kind of failure, drop or internal error is printed at most once every 10 seconds; a
-  following line gives the number suppressed in the meantime.
+  Each kind of message (per drop reason, HTTP status and failure) is printed at most once every 10
+  seconds: the first occurrence at once, later ones counted and included in the next line after
+  the 10 seconds (`... in the last 10s`, or `(N more in the last 10s)`). The limiter uses no
+  timer or thread.
 
   Everything else follows the logging flag, which is on by default in dev, including events
   dropped by sampling. The dev log line "Saved event" is now "Queued event", and the "Supplied event … with params"

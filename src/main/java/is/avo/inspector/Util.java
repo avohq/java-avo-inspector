@@ -227,7 +227,7 @@ class Util {
 
     // An internal error on the SDK's own threads: always logged, never thrown (there is no caller).
     static void logInternalError(Throwable e) {
-        AvoLog.INTERNAL_ERRORS.report(INTERNAL_ERROR_MESSAGE + " " + e, 1);
+        AvoLog.internal(e);
     }
 
     // SPEC.md §4.2 / §7.5: an internal error is always logged; in dev it is rethrown to the caller.
