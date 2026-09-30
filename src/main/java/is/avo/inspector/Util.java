@@ -215,6 +215,11 @@ class Util {
 
     static final String INTERNAL_ERROR_MESSAGE = "Avo Inspector: something went wrong. Please report to support@avo.app.";
 
+    // An internal error on the SDK's own threads: always logged, never thrown (there is no caller).
+    static void logInternalError(Throwable e) {
+        System.err.println(INTERNAL_ERROR_MESSAGE + " " + e);
+    }
+
     // SPEC.md §4.2 / §7.5: an internal error is always logged; in dev it is rethrown to the caller.
     static void handleException(Throwable e, String envName) {
         System.err.println(INTERNAL_ERROR_MESSAGE + " " + e);

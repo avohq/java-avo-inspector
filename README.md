@@ -221,7 +221,9 @@ with buffered events therefore stays alive until the process exits.
 `destroy()` stops the instance: buffered events are discarded unsent, in-flight requests are
 abandoned and later track calls do nothing.
 
-The SDK is safe to use from multiple threads.
+The SDK is safe to use from multiple threads. Create one instance per API key and app, when your
+application starts, and share it; don't create an instance per request. Every instance's sends run
+on one shared pool of 16 daemon threads, and each instance runs at most 4 sends at once.
 
 # Upgrading from 1.x to 2.0
 

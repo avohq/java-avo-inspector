@@ -35,7 +35,14 @@ class AvoBatcher {
         AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey);
     }
 
-    private static final int SEND_THREADS = 4;
+    // Sends one instance may have running at once; later ones wait in order.
+    static final int MAX_IN_FLIGHT_SENDS = 4;
+    // One bounded pool runs the sends of every instance, so creating many instances cannot
+    // multiply threads until thread creation fails.
+    static final int SHARED_SEND_THREADS = 16;
+    private static final ThreadPoolExecutor sharedSendPool = newSharedSendPool();
+    // Test-only replacement for the shared pool (e.g. one that fails to start a thread).
+    @Nullable static volatile java.util.concurrent.Executor sendExecutorForTesting;
 
     // Every batcher with buffered or in-flight events, held strongly so pending events are never
     // lost to garbage collection; a batcher leaves once drained, so an idle instance stays
@@ -76,13 +83,15 @@ class AvoBatcher {
     @Nullable private ScheduledFuture<?> pendingTimer;
     // Guarded by lock. Test-only count of scheduled flushes.
     int timerArmsForTesting;
-    private final ThreadPoolExecutor sendExecutor;
     // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
     @Nullable volatile Runnable afterSwapForTesting;
 
     private final Object sendQueueLock = new Object();
-    // Guarded by sendQueueLock: events in sends waiting for a send thread.
+    // Guarded by sendQueueLock: sends waiting for one of this instance's send slots, the events
+    // they hold, and how many of its sends are running.
+    private final ArrayDeque<SendTask> waiting = new ArrayDeque<>();
     private int queuedEvents;
+    private int running;
 
     private final Set<Future<AvoNetworkCallsHandler.SendResult>> inFlight =
             Collections.newSetFromMap(new ConcurrentHashMap<Future<AvoNetworkCallsHandler.SendResult>, Boolean>());
@@ -95,11 +104,6 @@ class AvoBatcher {
 
         // Daemon threads: neither the timer nor a pending send holds the JVM open (SPEC.md §11.4).
         timerEnabled = !disableBatchTimer && batchSize > 1;
-        // Send threads exit after 5 idle seconds, so an idle instance soon holds no thread. The
-        // queue itself is bounded by queued events in submit(), not by its capacity.
-        sendExecutor = new ThreadPoolExecutor(SEND_THREADS, SEND_THREADS, 5, TimeUnit.SECONDS,
-                new SendQueue(), daemonThreads("avo-inspector-send"));
-        sendExecutor.allowCoreThreadTimeOut(true);
     }
 
     private static void registerForShutdownFlush(AvoBatcher batcher) {
@@ -296,8 +300,11 @@ class AvoBatcher {
                 pendingTimer = null;
             }
         }
-        sendExecutor.shutdownNow();
-        for (Future<AvoNetworkCallsHandler.SendResult> send : inFlight) {
+        synchronized (sendQueueLock) {
+            waiting.clear();
+            queuedEvents = 0;
+        }
+        for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
             send.cancel(true);
         }
         inFlight.clear();
@@ -339,22 +346,28 @@ class AvoBatcher {
             pendingTimer = sharedTimer.schedule(new Runnable() {
                 @Override
                 public void run() {
-                    List<SendTask> sends;
-                    synchronized (lock) {
-                        if (destroyed || generation != armedGeneration) {
-                            return;
+                    try {
+                        List<SendTask> sends;
+                        synchronized (lock) {
+                            if (destroyed || generation != armedGeneration) {
+                                return;
+                            }
+                            pendingTimer = null;
+                            if (buffer.isEmpty()) {
+                                return;
+                            }
+                            sends = prepare(swap());
                         }
-                        pendingTimer = null;
-                        if (buffer.isEmpty()) {
-                            return;
-                        }
-                        sends = prepare(swap());
+                        submit(sends);
+                    } catch (Throwable e) {
+                        Util.logInternalError(e);
                     }
-                    submit(sends);
                 }
             }, flushMillis, TimeUnit.MILLISECONDS);
-        } catch (RejectedExecutionException ignored) {
-            // The shared timer never shuts down; nothing to do if it ever refuses.
+        } catch (Throwable e) {
+            // No timer thread (e.g. thread creation failed): the events wait for the size trigger
+            // or flush().
+            Util.logInternalError(e);
         }
     }
 
@@ -383,59 +396,79 @@ class AvoBatcher {
         return sends;
     }
 
-    // Outside the lock: the HTTP send runs on the send executor. Sends waiting for a thread hold
-    // at most maxQueueSize events in total, so an outage cannot pile them up without limit; past
-    // that the oldest waiting sends are dropped (at-most-once, like the maxQueueSize bound). A
-    // flush split across several targets fits, because one flush never exceeds maxQueueSize.
+    // Outside the lock: the HTTP send runs on the shared send pool, at most MAX_IN_FLIGHT_SENDS of
+    // this instance's sends at once. Sends waiting for a slot hold at most maxQueueSize events;
+    // past that the oldest waiting sends are dropped (at-most-once, like the maxQueueSize bound).
     private List<Future<AvoNetworkCallsHandler.SendResult>> submit(List<SendTask> sends) {
-        List<Future<AvoNetworkCallsHandler.SendResult>> submitted = new ArrayList<>(sends.size());
         int dropped = 0;
         synchronized (sendQueueLock) {
             for (SendTask send : sends) {
-                try {
-                    sendExecutor.execute(send);
-                    submitted.add(send);
-                } catch (RejectedExecutionException e) {
-                    // Destroyed concurrently: the batch is abandoned.
-                    send.unqueue();
-                    send.cancel(false);
-                }
+                waiting.addLast(send);
+                queuedEvents += send.eventCount;
             }
-            while (queuedEvents > maxQueueSize) {
-                Runnable oldest = sendExecutor.getQueue().poll();
-                if (oldest == null) {
-                    break;
-                }
-                SendTask oldestSend = (SendTask) oldest;
-                if (oldestSend.unqueue()) {
-                    dropped += oldestSend.eventCount;
-                }
-                oldestSend.cancel(false);
+            while (queuedEvents > maxQueueSize && !waiting.isEmpty()) {
+                SendTask oldest = waiting.pollFirst();
+                queuedEvents -= oldest.eventCount;
+                dropped += oldest.eventCount;
+                oldest.cancel(false);
             }
         }
         if (dropped > 0 && AvoInspector.isLogging()) {
             System.err.println("Avo Inspector: send queue full; dropped " + dropped + " oldest event(s).");
         }
-        return submitted;
+        pump();
+        return new ArrayList<Future<AvoNetworkCallsHandler.SendResult>>(sends);
     }
 
-    // Counts a send as waiting only when it really enters the queue: execute() hands the first
-    // sends straight to new threads without queuing them.
-    private static final class SendQueue extends LinkedBlockingQueue<Runnable> {
-        @Override
-        public boolean offer(Runnable send) {
-            if (send instanceof SendTask) {
-                ((SendTask) send).markQueued();
+    // Starts waiting sends while this instance has a free slot. A send the pool cannot start (for
+    // example when no thread can be created) is dropped rather than left pending forever.
+    private void pump() {
+        while (true) {
+            SendTask next;
+            synchronized (sendQueueLock) {
+                if (running >= MAX_IN_FLIGHT_SENDS || waiting.isEmpty()) {
+                    return;
+                }
+                next = waiting.pollFirst();
+                queuedEvents -= next.eventCount;
+                running++;
             }
-            return super.offer(send);
+            try {
+                java.util.concurrent.Executor override = sendExecutorForTesting;
+                (override != null ? override : sharedSendPool).execute(new SendRunner(next));
+            } catch (Throwable e) {
+                synchronized (sendQueueLock) {
+                    running--;
+                }
+                next.cancel(false);
+                Util.logInternalError(e);
+            }
+        }
+    }
+
+    // Runs one send and frees its slot, whatever happens.
+    private final class SendRunner implements Runnable {
+        private final SendTask send;
+
+        SendRunner(SendTask send) {
+            this.send = send;
+        }
+
+        @Override
+        public void run() {
+            try {
+                send.run();
+            } finally {
+                synchronized (sendQueueLock) {
+                    running--;
+                }
+                pump();
+            }
         }
     }
 
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
         final int eventCount;
-
-        // Guarded by sendQueueLock: counted in queuedEvents while waiting for a send thread.
-        private boolean queued;
 
         SendTask(final String apiKey, final List<Map<String, Object>> events) {
             super(new Callable<AvoNetworkCallsHandler.SendResult>() {
@@ -447,36 +480,15 @@ class AvoBatcher {
             this.eventCount = events.size();
         }
 
-        void markQueued() {
-            synchronized (sendQueueLock) {
-                queued = true;
-                queuedEvents += eventCount;
-            }
-        }
-
-        // Stops counting this send as waiting; false if it was not.
-        boolean unqueue() {
-            synchronized (sendQueueLock) {
-                if (!queued) {
-                    return false;
-                }
-                queued = false;
-                queuedEvents -= eventCount;
-                return true;
-            }
-        }
-
-        @Override
-        public void run() {
-            unqueue();
-            super.run();
-        }
-
         @Override
         protected void done() {
-            inFlight.remove(this);
-            synchronized (lock) {
-                releaseIfDrained();
+            try {
+                inFlight.remove(this);
+                synchronized (lock) {
+                    releaseIfDrained();
+                }
+            } catch (Throwable e) {
+                Util.logInternalError(e);
             }
         }
     }
@@ -490,6 +502,14 @@ class AvoBatcher {
         } catch (ExecutionException | TimeoutException | CancellationException ignored) {
         }
         return null;
+    }
+
+    // Threads exit after 5 idle seconds, so an idle JVM holds no send thread.
+    private static ThreadPoolExecutor newSharedSendPool() {
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(SHARED_SEND_THREADS, SHARED_SEND_THREADS, 5, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<Runnable>(), daemonThreads("avo-inspector-send"));
+        pool.allowCoreThreadTimeOut(true);
+        return pool;
     }
 
     private static ScheduledThreadPoolExecutor newSharedTimer() {

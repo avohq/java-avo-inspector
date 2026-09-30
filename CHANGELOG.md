@@ -23,7 +23,7 @@ Wire and schema:
 Delivery and robustness:
 
 - **Events are buffered outside dev** and sent when `batchSize` events are queued, when the oldest is `batchFlushSeconds` old, or on `flush()`. Dev sends every event immediately. When more than `maxQueueSize` events are buffered the oldest are dropped. `batchSize` larger than `maxQueueSize` prints a warning.
-- **At most 4 requests are sent at once per instance.** Sends waiting their turn hold at most `maxQueueSize` events; past that the oldest waiting sends are dropped. Failed requests are never retried.
+- **One shared pool of 16 daemon threads sends for every instance**, and each instance runs at most 4 sends at once, so creating many instances cannot exhaust threads. A send that cannot be started is dropped and logged, never left pending. Sends waiting their turn hold at most `maxQueueSize` events; past that the oldest waiting sends are dropped. Failed requests are never retried.
 - **Each request has a 10-second budget**, covering connect, write and read.
 - **Redirects are not followed.** A 3xx counts as a failed response, so the `api-key` header is never forwarded to another host.
 - **The API key is checked for control characters**, in the constructor, in `AvoInspectorTarget` and again before each send. A key with a control character other than tab is refused, and the send is dropped rather than the key rewritten. Blank means empty or Unicode whitespace only.
