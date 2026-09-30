@@ -36,6 +36,11 @@ tasks.withType(JavaCompile).configureEach {
     }
 }
 
+// The changelog ships with the sources; the main jar stays code only.
+tasks.named('sourcesJar') {
+    from('CHANGELOG.md')
+}
+
 // A stable module name for consumers on the module path (the jar has no module-info).
 jar {
     manifest {
