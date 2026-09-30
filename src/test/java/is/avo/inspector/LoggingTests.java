@@ -282,6 +282,32 @@ public class LoggingTests {
         assertEquals("", stderr());
     }
 
+    @Test(timeout = 20_000)
+    public void aValueWhoseToStringThrowsDoesNotBreakTrackingInDev() throws Exception {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Dev);
+        AvoInspector.enableLogging(true);
+        Map<String, Object> props = new java.util.LinkedHashMap<>();
+        props.put("bad", new Object() {
+            @Override
+            public String toString() {
+                throw new IllegalStateException("toString failed");
+            }
+        });
+        props.put("ok", 1);
+        PrintStream originalOut = System.out;
+        System.setOut(new PrintStream(new ByteArrayOutputStream(), true, "UTF-8"));
+        Map<String, AvoEventSchemaType> schema;
+        try {
+            schema = inspector.trackSchemaFromEvent("Event", props);
+        } finally {
+            System.setOut(originalOut);
+        }
+        inspector.flush();
+
+        assertEquals(2, schema.size());
+        assertEquals(1, server.requests().size());
+    }
+
     @Test
     public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
         server.delayResponses(1000);

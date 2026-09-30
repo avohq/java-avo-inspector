@@ -267,9 +267,14 @@ public class AvoInspector implements Inspector {
         }
     }
 
+    // A logging failure must never change whether an event is tracked.
     private void logPreExtract(@NotNull String eventName, @Nullable Object eventProperties) {
         if (isLogging() && eventProperties != null) {
-            System.out.println("Avo Inspector: Supplied event " + eventName + " with params \n" + eventProperties);
+            try {
+                System.out.println("Avo Inspector: Supplied event " + eventName + " with params \n" + Util.describeSafely(eventProperties));
+            } catch (Throwable ignored) {
+                // Nothing to log.
+            }
         }
     }
 
@@ -321,12 +326,20 @@ public class AvoInspector implements Inspector {
     // cleanly. toString() keeps its 1.1.1 form and is not used here.
     static void logPostExtract(@Nullable String eventName, @NotNull Map<String, AvoEventSchemaType> eventSchema) {
         if (isLogging()) {
-            String schemaJson = Util.remapProperties(eventSchema).toString();
-            if (eventName != null) {
-                System.out.println("Avo Inspector: Queued event " + eventName + " with schema " + schemaJson);
-            } else {
-                System.out.println("Avo Inspector: Parsed schema " + schemaJson);
+            try {
+                printSchema(eventName, eventSchema);
+            } catch (Throwable ignored) {
+                // A logging failure must never change whether an event is tracked.
             }
+        }
+    }
+
+    private static void printSchema(@Nullable String eventName, @NotNull Map<String, AvoEventSchemaType> eventSchema) {
+        String schemaJson = Util.remapProperties(eventSchema).toString();
+        if (eventName != null) {
+            System.out.println("Avo Inspector: Queued event " + eventName + " with schema " + schemaJson);
+        } else {
+            System.out.println("Avo Inspector: Parsed schema " + schemaJson);
         }
     }
 
