@@ -308,6 +308,36 @@ public class LoggingTests {
         assertEquals(1, server.requests().size());
     }
 
+    @Test(timeout = 20_000)
+    public void logsShowTypesNeverPropertyValues() throws Exception {
+        // A dev instance turns logging on for the whole process, prod instances included.
+        inspectors.add(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Dev));
+        AvoInspector prod = inspector(AvoInspectorEnv.Prod);
+        AvoInspector.enableLogging(true);
+        Map<String, Object> props = new java.util.LinkedHashMap<>();
+        props.put("email", "alice@example.com");
+        props.put("nested", Collections.<String, Object>singletonMap("phone", "+44 7700 900123"));
+        props.put("list", java.util.Arrays.asList("secret-token-1"));
+
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(out, true, "UTF-8"));
+        try {
+            prod.trackSchemaFromEvent("Signed Up", props);
+            prod.extractSchema(props);
+            prod.flush();
+        } finally {
+            System.setOut(originalOut);
+        }
+        String logs = new String(out.toByteArray(), StandardCharsets.UTF_8) + stderr();
+
+        assertTrue(logs, logs.contains("Avo Inspector: Queued event Signed Up with schema "));
+        assertTrue(logs, logs.contains("\"propertyName\":\"email\""));
+        for (String value : new String[]{"alice@example.com", "+44 7700 900123", "secret-token-1"}) {
+            assertFalse(logs, logs.contains(value));
+        }
+    }
+
     @Test
     public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
         server.delayResponses(1000);

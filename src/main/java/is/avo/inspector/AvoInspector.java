@@ -242,8 +242,6 @@ public class AvoInspector implements Inspector {
             return new LinkedHashMap<>();
         }
         try {
-            logPreExtract(eventName, eventProperties);
-
             Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
 
             List<Future<AvoNetworkCallsHandler.SendResult>> sends = trackSchemaInternal(eventName, schema, target, streamId, options);
@@ -264,17 +262,6 @@ public class AvoInspector implements Inspector {
             // Errors too: nothing the SDK does may escape a track call outside dev (SPEC.md §4.2).
             handleException(e, AvoInspector.this.env);
             return new LinkedHashMap<>();
-        }
-    }
-
-    // A logging failure must never change whether an event is tracked.
-    private void logPreExtract(@NotNull String eventName, @Nullable Object eventProperties) {
-        if (isLogging() && eventProperties != null) {
-            try {
-                System.out.println("Avo Inspector: Supplied event " + eventName + " with params \n" + Util.describeSafely(eventProperties));
-            } catch (Throwable ignored) {
-                // Nothing to log.
-            }
         }
     }
 

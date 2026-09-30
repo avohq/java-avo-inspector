@@ -90,7 +90,8 @@ warning.
 # Enabling logs
 
 Logs are enabled by default in the dev mode and disabled in prod mode based on the init flag.
-The flag is process-wide: it applies to every instance. Do not enable it in production.
+The flag is process-wide: it applies to every instance. Do not enable it in production. Logs show
+event names, property names and types, never property values.
 
 ```java
 AvoInspector.enableLogging(true);
@@ -310,7 +311,8 @@ avoInspector.flush();
   following line gives the number suppressed in the meantime.
 
   Everything else follows the logging flag, which is on by default in dev, including events
-  dropped by sampling. The dev log line "Saved event" is now "Queued event".
+  dropped by sampling. The dev log line "Saved event" is now "Queued event", and the "Supplied event … with params"
+  line, which printed raw property values, is gone: logs show property names and types only.
 - **New endpoint and wire body.** Events go to `https://api.avo.app/inspector/v2/track` with the
   API key in an `api-key` header. The body no longer has a `sessionStarted` element or a
   `sessionId` (or `avoFunction`) field, and each event carries a `streamId`. `sessionId` is not

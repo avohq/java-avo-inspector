@@ -215,28 +215,6 @@ class Util {
 
     static final String INTERNAL_ERROR_MESSAGE = "Avo Inspector: something went wrong. Please report to support@avo.app.";
 
-    // Each value rendered on its own, so one whose toString() throws shows as <unprintable Type>.
-    static String describeSafely(Object properties) {
-        if (properties instanceof Map) {
-            StringBuilder result = new StringBuilder("{");
-            boolean first = true;
-            for (Map.Entry<?, ?> entry : ((Map<?, ?>) properties).entrySet()) {
-                result.append(first ? "" : ", ").append(safeString(entry.getKey())).append('=').append(safeString(entry.getValue()));
-                first = false;
-            }
-            return result.append('}').toString();
-        }
-        return safeString(properties);
-    }
-
-    static String safeString(@Nullable Object value) {
-        try {
-            return String.valueOf(value);
-        } catch (Throwable e) {
-            return "<unprintable " + value.getClass().getName() + ">";
-        }
-    }
-
     // A caught InterruptedException must leave the thread interrupted; ThreadDeath is rethrown.
     static void restoreInterrupt(Throwable e) {
         if (e instanceof InterruptedException) {
