@@ -36,6 +36,13 @@ tasks.withType(JavaCompile).configureEach {
     }
 }
 
+// A stable module name for consumers on the module path (the jar has no module-info).
+jar {
+    manifest {
+        attributes('Automatic-Module-Name': 'is.avo.inspector')
+    }
+}
+
 publishing {
     publications {
         maven(MavenPublication) {
