@@ -116,10 +116,10 @@ class AvoNetworkCallsHandler {
             }
         }
 
-        return post(body, headers);
+        return post(body, headers, events.size());
     }
 
-    private SendResult post(byte[] body, Map<String, String> headers) {
+    private SendResult post(byte[] body, Map<String, String> headers, int eventCount) {
         HttpURLConnection connection = null;
         final AtomicBoolean timedOut = new AtomicBoolean(false);
         ScheduledFuture<?> deadline = null;
@@ -162,7 +162,9 @@ class AvoNetworkCallsHandler {
             int responseCode = connection.getResponseCode();
             if (responseCode != HttpURLConnection.HTTP_OK) {
                 drain(connection.getErrorStream());
-                logError("Failed with code " + responseCode);
+                // Always reported, at most once per window; never the key or the body.
+                AvoLog.NON_200.report("Avo Inspector: Inspector API returned status " + responseCode + "; "
+                        + eventCount + " event(s) not stored.", 1);
                 return SendResult.NON_200;
             }
 

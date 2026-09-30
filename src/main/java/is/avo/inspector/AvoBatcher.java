@@ -40,6 +40,11 @@ class AvoBatcher {
     // One bounded pool runs the sends of every instance, so creating many instances cannot
     // multiply threads until thread creation fails.
     static final int SHARED_SEND_THREADS = 16;
+    // Events that may wait for a send slot, across all waiting sends. Separate from maxQueueSize,
+    // which bounds only the unsent buffer; past this the oldest waiting events are dropped.
+    static final int MAX_WAITING_EVENTS = 10_000;
+    // Test-only: a smaller allowance.
+    static volatile int maxWaitingEvents = MAX_WAITING_EVENTS;
     private static final ThreadPoolExecutor sharedSendPool = newSharedSendPool();
     // Test-only replacement for the shared pool (e.g. one that fails to start a thread).
     @Nullable static volatile java.util.concurrent.Executor sendExecutorForTesting;
@@ -68,9 +73,11 @@ class AvoBatcher {
     private final long flushMillis;
 
     private final Object lock = new Object();
-    // Guarded by lock.
-    private final ArrayDeque<Map<String, Object>> buffer = new ArrayDeque<>();
-    private long generation;
+    // Guarded by lock: one buffer per (apiKey, appName), so each target's batches fill to
+    // batchSize, and the events buffered across all of them.
+    private final LinkedHashMap<List<Object>, TargetBuffer> buffers = new LinkedHashMap<>();
+    private int totalBuffered;
+    private long nextSequence;
     private boolean destroyed;
     // Guarded by lock: whether this batcher is in busyBatchers.
     private boolean registered;
@@ -79,8 +86,6 @@ class AvoBatcher {
     private static final ScheduledThreadPoolExecutor sharedTimer = newSharedTimer();
 
     private final boolean timerEnabled;
-    // Guarded by lock: the pending scheduled flush, cancelled on destroy().
-    @Nullable private ScheduledFuture<?> pendingTimer;
     // Guarded by lock. Test-only count of scheduled flushes.
     int timerArmsForTesting;
     // Test-only: runs after a size-triggered swap, outside the lock, before the batch is sent.
@@ -196,7 +201,7 @@ class AvoBatcher {
 
     // Caller holds lock. Leaves the shutdown registry once nothing is buffered or in flight.
     private void releaseIfDrained() {
-        if (registered && buffer.isEmpty() && inFlight.isEmpty()) {
+        if (registered && totalBuffered == 0 && inFlight.isEmpty()) {
             registered = false;
             unregisterFromShutdownFlush(this, false);
         }
@@ -228,24 +233,33 @@ class AvoBatcher {
             if (destroyed) {
                 return Collections.emptyList();
             }
-            while (buffer.size() >= maxQueueSize) {
-                buffer.pollFirst();
+            while (totalBuffered >= maxQueueSize) {
+                dropOldestBuffered();
                 dropped++;
             }
-            buffer.addLast(event);
+            List<Object> key = Arrays.asList(event.get("apiKey"), event.get("appName"));
+            TargetBuffer target = buffers.get(key);
+            if (target == null) {
+                target = new TargetBuffer(key);
+                buffers.put(key, target);
+            }
+            target.events.addLast(event);
+            target.sequences.addLast(nextSequence++);
+            totalBuffered++;
             if (!registered) {
                 registered = true;
                 registerForShutdownFlush(this);
             }
-            if (buffer.size() >= batchSize) {
-                sends = prepare(swap());
-            } else if (timerEnabled && pendingTimer == null) {
-                armTimer(generation);
+            if (target.events.size() >= batchSize) {
+                sends = prepare(swap(target));
+            } else if (timerEnabled && target.timer == null) {
+                armTimer(target);
             }
         }
 
-        if (dropped > 0 && AvoInspector.isLogging()) {
-            System.err.println("Avo Inspector: maxQueueSize exceeded; dropped " + dropped + " oldest event(s).");
+        if (dropped > 0) {
+            AvoLog.DROPPED_EVENTS.report("Avo Inspector: maxQueueSize (" + maxQueueSize + ") exceeded; dropped "
+                    + dropped + " oldest buffered event(s).", dropped);
         }
         Runnable afterSwap = afterSwapForTesting;
         if (sends != null && afterSwap != null) {
@@ -264,14 +278,20 @@ class AvoBatcher {
 
     // Returns false once destroyed.
     private boolean sendBuffered() {
-        List<SendTask> sends;
+        List<SendTask> sends = new ArrayList<>();
         synchronized (lock) {
             if (destroyed) {
                 return false;
             }
-            sends = buffer.isEmpty() ? null : prepare(swap());
+            for (TargetBuffer target : new ArrayList<>(buffers.values())) {
+                if (target.events.isEmpty()) {
+                    retire(target);
+                } else {
+                    sends.addAll(prepare(swap(target)));
+                }
+            }
         }
-        if (sends != null) {
+        if (!sends.isEmpty()) {
             submit(sends);
         }
         return true;
@@ -293,12 +313,15 @@ class AvoBatcher {
             registered = false;
             unregisterFromShutdownFlush(this, true);
             destroyed = true;
-            buffer.clear();
-            generation++;
-            if (pendingTimer != null) {
-                pendingTimer.cancel(false);
-                pendingTimer = null;
+            for (TargetBuffer target : buffers.values()) {
+                target.generation++;
+                if (target.timer != null) {
+                    target.timer.cancel(false);
+                    target.timer = null;
+                }
             }
+            buffers.clear();
+            totalBuffered = 0;
         }
         synchronized (sendQueueLock) {
             waiting.clear();
@@ -316,7 +339,7 @@ class AvoBatcher {
 
     int bufferedCount() {
         synchronized (lock) {
-            return buffer.size();
+            return totalBuffered;
         }
     }
 
@@ -326,48 +349,101 @@ class AvoBatcher {
         }
     }
 
-    // Caller holds lock. The atomic swap-and-clear of SPEC.md §3.1.
-    private List<Map<String, Object>> swap() {
-        List<Map<String, Object>> batch = new ArrayList<>(buffer);
-        buffer.clear();
-        generation++;
-        // The pending flush was for the events just swapped out.
-        if (pendingTimer != null) {
-            pendingTimer.cancel(false);
-            pendingTimer = null;
+    // One target's unsent events, with their enqueue order for the global oldest-first drop.
+    private final class TargetBuffer {
+        final List<Object> key;
+        final ArrayDeque<Map<String, Object>> events = new ArrayDeque<>();
+        final ArrayDeque<Long> sequences = new ArrayDeque<>();
+        // Guarded by lock: bumped by every swap, so a stale scheduled flush does nothing.
+        long generation;
+        @Nullable ScheduledFuture<?> timer;
+
+        TargetBuffer(List<Object> key) {
+            this.key = key;
         }
+    }
+
+    // Caller holds lock. Drops the oldest buffered event across all targets.
+    private void dropOldestBuffered() {
+        TargetBuffer oldest = null;
+        for (TargetBuffer target : buffers.values()) {
+            if (!target.sequences.isEmpty()
+                    && (oldest == null || target.sequences.peekFirst() < oldest.sequences.peekFirst())) {
+                oldest = target;
+            }
+        }
+        if (oldest == null) {
+            return;
+        }
+        oldest.events.pollFirst();
+        oldest.sequences.pollFirst();
+        totalBuffered--;
+        // Keep a buffer whose flush is pending: re-adding to it must not arm a second flush.
+        if (oldest.events.isEmpty() && oldest.timer == null) {
+            retire(oldest);
+        }
+    }
+
+    // Caller holds lock. Removes an empty target buffer and its pending flush.
+    private void retire(TargetBuffer target) {
+        target.generation++;
+        if (target.timer != null) {
+            target.timer.cancel(false);
+            target.timer = null;
+        }
+        buffers.remove(target.key);
+    }
+
+    // Caller holds lock. The atomic swap-and-clear of SPEC.md §3.1, for one target.
+    private List<Map<String, Object>> swap(TargetBuffer target) {
+        List<Map<String, Object>> batch = new ArrayList<>(target.events);
+        target.events.clear();
+        target.sequences.clear();
+        totalBuffered -= batch.size();
+        retire(target);
         return batch;
     }
 
-    // Caller holds lock. One-shot flush of this buffer generation once its oldest event is due.
-    private void armTimer(final long armedGeneration) {
+    // Caller holds lock. One-shot flush of this target's buffer once its oldest event is due.
+    private void armTimer(TargetBuffer target) {
         timerArmsForTesting++;
         try {
-            pendingTimer = sharedTimer.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        List<SendTask> sends;
-                        synchronized (lock) {
-                            if (destroyed || generation != armedGeneration) {
-                                return;
-                            }
-                            pendingTimer = null;
-                            if (buffer.isEmpty()) {
-                                return;
-                            }
-                            sends = prepare(swap());
-                        }
-                        submit(sends);
-                    } catch (Throwable e) {
-                        Util.logInternalError(e);
-                    }
-                }
-            }, flushMillis, TimeUnit.MILLISECONDS);
+            target.timer = sharedTimer.schedule(new TimerFlush(target, target.generation), flushMillis, TimeUnit.MILLISECONDS);
         } catch (Throwable e) {
             // No timer thread (e.g. thread creation failed): the events wait for the size trigger
             // or flush().
             Util.logInternalError(e);
+        }
+    }
+
+    private final class TimerFlush implements Runnable {
+        private final TargetBuffer target;
+        private final long armedGeneration;
+
+        TimerFlush(TargetBuffer target, long armedGeneration) {
+            this.target = target;
+            this.armedGeneration = armedGeneration;
+        }
+
+        @Override
+        public void run() {
+            try {
+                List<SendTask> sends;
+                synchronized (lock) {
+                    if (destroyed || buffers.get(target.key) != target || target.generation != armedGeneration) {
+                        return;
+                    }
+                    target.timer = null;
+                    if (target.events.isEmpty()) {
+                        retire(target);
+                        return;
+                    }
+                    sends = prepare(swap(target));
+                }
+                submit(sends);
+            } catch (Throwable e) {
+                Util.logInternalError(e);
+            }
         }
     }
 
@@ -389,7 +465,7 @@ class AvoBatcher {
 
         List<SendTask> sends = new ArrayList<>(partitions.size());
         for (Map.Entry<List<Object>, List<Map<String, Object>>> partition : partitions.entrySet()) {
-            SendTask send = new SendTask(String.valueOf(partition.getKey().get(0)), partition.getValue());
+            SendTask send = new SendTask(String.valueOf(partition.getKey().get(0)), new ArrayList<>(partition.getValue()));
             inFlight.add(send);
             sends.add(send);
         }
@@ -397,24 +473,30 @@ class AvoBatcher {
     }
 
     // Outside the lock: the HTTP send runs on the shared send pool, at most MAX_IN_FLIGHT_SENDS of
-    // this instance's sends at once. Sends waiting for a slot hold at most maxQueueSize events;
-    // past that the oldest waiting sends are dropped (at-most-once, like the maxQueueSize bound).
+    // this instance's sends at once. Sends waiting for a slot hold at most MAX_WAITING_EVENTS
+    // events; past that the oldest waiting events are dropped (at-most-once).
     private List<Future<AvoNetworkCallsHandler.SendResult>> submit(List<SendTask> sends) {
         int dropped = 0;
+        int allowance = maxWaitingEvents;
         synchronized (sendQueueLock) {
             for (SendTask send : sends) {
                 waiting.addLast(send);
                 queuedEvents += send.eventCount;
             }
-            while (queuedEvents > maxQueueSize && !waiting.isEmpty()) {
-                SendTask oldest = waiting.pollFirst();
-                queuedEvents -= oldest.eventCount;
-                dropped += oldest.eventCount;
-                oldest.cancel(false);
+            while (queuedEvents > allowance && !waiting.isEmpty()) {
+                SendTask oldest = waiting.peekFirst();
+                int removed = oldest.dropOldest(queuedEvents - allowance);
+                queuedEvents -= removed;
+                dropped += removed;
+                if (oldest.eventCount == 0) {
+                    waiting.pollFirst();
+                    oldest.cancel(false);
+                }
             }
         }
-        if (dropped > 0 && AvoInspector.isLogging()) {
-            System.err.println("Avo Inspector: send queue full; dropped " + dropped + " oldest event(s).");
+        if (dropped > 0) {
+            AvoLog.DROPPED_EVENTS.report("Avo Inspector: sends waiting to be sent exceed " + allowance
+                    + " events; dropped " + dropped + " oldest event(s).", dropped);
         }
         pump();
         return new ArrayList<Future<AvoNetworkCallsHandler.SendResult>>(sends);
@@ -468,7 +550,9 @@ class AvoBatcher {
     }
 
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
-        final int eventCount;
+        // Guarded by sendQueueLock while the send waits; fixed once it starts.
+        private final List<Map<String, Object>> events;
+        int eventCount;
 
         SendTask(final String apiKey, final List<Map<String, Object>> events) {
             super(new Callable<AvoNetworkCallsHandler.SendResult>() {
@@ -477,7 +561,16 @@ class AvoBatcher {
                     return sender.send(events, apiKey);
                 }
             });
+            this.events = events;
             this.eventCount = events.size();
+        }
+
+        // Caller holds sendQueueLock and the send has not started. Returns how many were dropped.
+        int dropOldest(int count) {
+            int removed = Math.min(count, events.size());
+            events.subList(0, removed).clear();
+            eventCount -= removed;
+            return removed;
         }
 
         @Override
@@ -510,6 +603,16 @@ class AvoBatcher {
                 new LinkedBlockingQueue<Runnable>(), daemonThreads("avo-inspector-send"));
         pool.allowCoreThreadTimeOut(true);
         return pool;
+    }
+
+    // Runs a task on the shared timer; false if it could not be scheduled.
+    static boolean scheduleShared(Runnable task, long delayNanos) {
+        try {
+            sharedTimer.schedule(task, Math.max(0L, delayNanos), TimeUnit.NANOSECONDS);
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
     }
 
     private static ScheduledThreadPoolExecutor newSharedTimer() {

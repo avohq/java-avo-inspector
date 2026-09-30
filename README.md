@@ -193,8 +193,9 @@ Map<String, AvoEventSchemaType> schema = avoInspector.extractSchema(new HashMap<
 
 Outside dev, events are buffered in memory and sent in batches: when `batchSize` events are
 buffered, when the oldest buffered event is `batchFlushSeconds` old, or when you call `flush()`.
-In dev every event is sent immediately. When more than `maxQueueSize` events are buffered the
-oldest are dropped.
+Each target (API key and app name, see [Override Avo source](#override-avo-source)) has its own
+buffer, so its batches fill to `batchSize`. In dev every event is sent immediately. When more than
+`maxQueueSize` events are buffered in total the oldest are dropped.
 
 Delivery is at-most-once. Nothing is written to disk, failed requests are not retried, and the
 background threads are daemon threads that do not keep the JVM alive. **Call `flush()` before your
@@ -224,6 +225,31 @@ abandoned and later track calls do nothing.
 The SDK is safe to use from multiple threads. Create one instance per API key and app, when your
 application starts, and share it; don't create an instance per request. Every instance's sends run
 on one shared pool of 16 daemon threads, and each instance runs at most 4 sends at once.
+
+## High-volume and backfill scripts
+
+Each instance sends at most 4 requests at once, each carrying one batch. Its throughput is therefore
+about 4 × `batchSize` events per round trip to the Inspector API: with the default `batchSize` of
+30 and 50 ms round trips, roughly 2,400 events per second. Batches formed while all 4 requests are
+busy wait their turn, and up to 10,000 events can wait. Beyond that the oldest waiting events are
+dropped. `maxQueueSize` bounds only the events not yet in a batch.
+
+Dropped events are always reported on stderr, whatever `enableLogging`, at most one line every 10
+seconds with the number dropped since the last line; so are non-200 responses. If you see drops:
+
+- raise `batchSize` (for example to 100), so each request carries more events;
+- in a backfill or import script that tracks faster than that, call `flush()` every few thousand
+  events so the waiting batches drain:
+
+```java
+for (int i = 0; i < rows.size(); i++) {
+    avoInspector.trackSchemaFromEvent(rows.get(i).eventName, rows.get(i).properties);
+    if (i % 5000 == 4999) {
+        avoInspector.flush();
+    }
+}
+avoInspector.flush();
+```
 
 # Upgrading from 1.x to 2.0
 
@@ -263,9 +289,11 @@ on one shared pool of 16 daemon threads, and each instance runs at most 4 sends 
   - warnings: invalid env, a `:` in a stream id, invalid batch options, and `batchSize` larger
     than `maxQueueSize`.
 
-  Everything else follows the logging flag, which is on by default in dev. That includes non-200
-  responses, events dropped by `maxQueueSize` or a full send queue, and events dropped by
-  sampling. The dev log line "Saved event" is now "Queued event".
+  - dropped events (`maxQueueSize` exceeded, or too many events waiting to be sent) and non-200
+    responses, at most one line per 10 seconds each, with the count since the last line.
+
+  Everything else follows the logging flag, which is on by default in dev, including events
+  dropped by sampling. The dev log line "Saved event" is now "Queued event".
 - **New endpoint and wire body.** Events go to `https://api.avo.app/inspector/v2/track` with the
   API key in an `api-key` header. The body no longer has a `sessionStarted` element or a
   `sessionId` (or `avoFunction`) field, and each event carries a `streamId`. `sessionId` is not

@@ -50,6 +50,76 @@ public class AvoBatcherTests {
     }
 
     @Test(timeout = 10_000)
+    public void waitingSendsHaveTheirOwnAllowanceNotMaxQueueSize() throws Exception {
+        final CountDownLatch release = new CountDownLatch(1);
+        AvoBatcher.Sender blocking = new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                sent.add(events);
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        };
+        // maxQueueSize bounds only the unsent buffer: 6 sends waiting behind the 4 running are kept.
+        AvoBatcher batcher = batcher(blocking, 1, 2, true);
+        for (int i = 1; i <= 10; i++) {
+            batcher.enqueue(event("E" + i));
+        }
+        release.countDown();
+        batcher.flush(5000);
+        assertEquals(10, sent.size());
+    }
+
+    @Test
+    public void eachTargetFillsItsOwnBatches() {
+        AvoBatcher batcher = batcher(recordingSender, 5, 1000, true);
+        for (int i = 0; i < 20; i++) {
+            Map<String, Object> event = event("E" + i);
+            event.put("apiKey", "key-" + (i % 2));
+            batcher.enqueue(event);
+        }
+        batcher.flush(5000);
+
+        assertEquals(4, sent.size());
+        synchronized (sent) {
+            for (List<Map<String, Object>> batch : sent) {
+                assertEquals(5, batch.size());
+                for (Map<String, Object> event : batch) {
+                    assertEquals(batch.get(0).get("apiKey"), event.get("apiKey"));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void maxQueueSizeBoundsTheTotalAcrossTargetsDroppingTheOldest() {
+        AvoBatcher batcher = batcher(recordingSender, 30, 3, true);
+        String[][] events = {{"key-a", "A1"}, {"key-b", "B1"}, {"key-a", "A2"}, {"key-b", "B2"}};
+        for (String[] e : events) {
+            Map<String, Object> event = event(e[1]);
+            event.put("apiKey", e[0]);
+            batcher.enqueue(event);
+        }
+        assertEquals(3, batcher.bufferedCount());
+        batcher.flush(5000);
+
+        List<String> names = new ArrayList<>();
+        synchronized (sent) {
+            for (List<Map<String, Object>> batch : sent) {
+                for (Map<String, Object> event : batch) {
+                    names.add((String) event.get("eventName"));
+                }
+            }
+        }
+        Collections.sort(names);
+        assertEquals(java.util.Arrays.asList("A2", "B1", "B2"), names);
+    }
+
+    @Test(timeout = 10_000)
     public void flushWaitsForABatchSwappedOutButNotYetDispatched() throws Exception {
         final AvoBatcher batcher = batcher(recordingSender, 2, 1000, true);
         final CountDownLatch swapped = new CountDownLatch(1);
@@ -108,10 +178,15 @@ public class AvoBatcherTests {
                 return AvoNetworkCallsHandler.SendResult.OK;
             }
         };
-        // batchSize 1, maxQueueSize 2: at most ceil(2 / 1) = 2 batches wait behind the 4 senders.
-        AvoBatcher batcher = batcher(blocking, 1, 2, true);
-        for (int i = 1; i <= 10; i++) {
-            batcher.enqueue(event("E" + i));
+        // Up to 4 sends run; at most 2 events may wait for a slot, the oldest dropped first.
+        AvoBatcher.maxWaitingEvents = 2;
+        AvoBatcher batcher = batcher(blocking, 1, 1000, true);
+        try {
+            for (int i = 1; i <= 10; i++) {
+                batcher.enqueue(event("E" + i));
+            }
+        } finally {
+            AvoBatcher.maxWaitingEvents = AvoBatcher.MAX_WAITING_EVENTS;
         }
         release.countDown();
         batcher.flush(5000);

@@ -42,7 +42,7 @@ public class SharedSendPoolTests {
 
     @Test(timeout = 60_000)
     public void manyInstancesShareABoundedSendPool() throws Exception {
-        server.delayResponses(100);
+        server.delayResponses(20);
         int peak = 0;
         for (int i = 0; i < 100; i++) {
             AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey("key").appVersion("1.0.0")

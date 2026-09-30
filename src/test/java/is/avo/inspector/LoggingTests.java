@@ -33,11 +33,14 @@ public class LoggingTests {
         originalErr = System.err;
         captured = new ByteArrayOutputStream();
         System.setErr(new PrintStream(captured, true, "UTF-8"));
+        AvoLog.resetForTesting();
     }
 
     @After
     public void tearDown() {
         System.setErr(originalErr);
+        AvoLog.windowMsForTesting = 0;
+        AvoLog.resetForTesting();
         for (AvoInspector inspector : inspectors) {
             inspector.destroy();
         }
@@ -104,21 +107,48 @@ public class LoggingTests {
         assertFalse(stderr().contains(API_KEY));
     }
 
-    @Test
-    public void non200StaysBehindTheLoggingFlag() throws Exception {
+    private static int count(String text, String part) {
+        int n = 0;
+        for (int i = text.indexOf(part); i >= 0; i = text.indexOf(part, i + 1)) {
+            n++;
+        }
+        return n;
+    }
+
+    @Test(timeout = 20_000)
+    public void non200IsAlwaysLoggedAndRateLimited() throws Exception {
+        AvoLog.windowMsForTesting = 500;
         server.respond(500, "{}");
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
 
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
-        inspector.flush();
-        assertEquals(1, server.requests().size());
-        assertEquals("", stderr());
+        for (int i = 0; i < 5; i++) {
+            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.flush();
+        }
+        assertEquals(5, server.requests().size());
+        assertEquals(stderr(), 1, count(stderr(), "status 500"));
 
-        AvoInspector.enableLogging(true);
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
-        inspector.flush();
-        assertTrue(stderr(), stderr().contains("Avo Inspector: Failed with code 500"));
+        Thread.sleep(1200);
+        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more non-200 response(s)"));
         assertFalse(stderr().contains(API_KEY));
+    }
+
+    @Test(timeout = 20_000)
+    public void droppedEventsAreAlwaysLoggedAndRateLimited() throws Exception {
+        AvoLog.windowMsForTesting = 500;
+        AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")
+                .env(AvoInspectorEnv.Prod).maxQueueSize(1).disableBatchTimer(true).build());
+        inspectors.add(inspector);
+        AvoInspector.enableLogging(false);
+        captured.reset();
+
+        for (int i = 0; i < 20; i++) {
+            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        }
+        assertEquals(stderr(), 1, count(stderr(), "dropped 1 oldest"));
+
+        Thread.sleep(1200);
+        assertTrue(stderr(), stderr().contains("Avo Inspector: 18 more event(s) dropped"));
     }
 
     @Test
