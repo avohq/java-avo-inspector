@@ -334,7 +334,7 @@ public class AvoInspector implements Inspector {
         try {
             return avoSchemaExtractor.extractSchema(eventProperties, true);
         } catch (Throwable e) {
-            System.err.println(Util.INTERNAL_ERROR_MESSAGE + " " + e);
+            Util.logInternalError(e);
             return new LinkedHashMap<>();
         }
     }
@@ -358,7 +358,7 @@ public class AvoInspector implements Inspector {
         try {
             batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
         } catch (Throwable e) {
-            System.err.println(Util.INTERNAL_ERROR_MESSAGE + " " + e);
+            Util.logInternalError(e);
         }
     }
 

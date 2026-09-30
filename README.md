@@ -286,11 +286,13 @@ avoInspector.flush();
   - a send that fails because of a network error, a timeout, or an API key the header check
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
   - internal errors (`Avo Inspector: something went wrong...`);
+  - dropped events (`maxQueueSize` exceeded, or too many events waiting to be sent) and non-200
+    responses;
   - warnings: invalid env, a `:` in a stream id, invalid batch options, and `batchSize` larger
     than `maxQueueSize`.
 
-  - dropped events (`maxQueueSize` exceeded, or too many events waiting to be sent) and non-200
-    responses, at most one line per 10 seconds each, with the count since the last line.
+  Each kind of failure, drop or internal error is printed at most once every 10 seconds; a
+  following line gives the number suppressed in the meantime.
 
   Everything else follows the logging flag, which is on by default in dev, including events
   dropped by sampling. The dev log line "Saved event" is now "Queued event".

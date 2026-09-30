@@ -267,7 +267,7 @@ class AvoNetworkCallsHandler {
     // here it never includes the apiKey or the request body (SPEC.md §7.5.1).
     private SendResult failed(String reason) {
         if (!aborted) {
-            System.err.println("Avo Inspector: schema sending failed: " + reason + ".");
+            AvoLog.SEND_FAILED.report("Avo Inspector: schema sending failed: " + reason + ".", 1);
         }
         return SendResult.FAILED;
     }

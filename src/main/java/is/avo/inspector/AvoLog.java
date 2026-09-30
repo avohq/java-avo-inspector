@@ -13,12 +13,14 @@ final class AvoLog {
 
     static final Channel DROPPED_EVENTS = new Channel("event(s) dropped");
     static final Channel NON_200 = new Channel("non-200 response(s)");
+    static final Channel SEND_FAILED = new Channel("failed send(s)");
+    static final Channel INTERNAL_ERRORS = new Channel("internal error(s)");
 
     private AvoLog() {
     }
 
     static void resetForTesting() {
-        for (Channel channel : new Channel[]{DROPPED_EVENTS, NON_200}) {
+        for (Channel channel : new Channel[]{DROPPED_EVENTS, NON_200, SEND_FAILED, INTERNAL_ERRORS}) {
             channel.reset();
         }
     }

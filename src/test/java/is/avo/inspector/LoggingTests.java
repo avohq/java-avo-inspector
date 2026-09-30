@@ -134,6 +134,42 @@ public class LoggingTests {
     }
 
     @Test(timeout = 20_000)
+    public void failedSendsAreRateLimited() throws Exception {
+        AvoLog.windowMsForTesting = 500;
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        inspector.networkCallsHandler.endpointForTesting = closedPortUrl();
+
+        for (int i = 0; i < 5; i++) {
+            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.flush();
+        }
+        assertEquals(stderr(), 1, count(stderr(), "schema sending failed: Request failed."));
+
+        Thread.sleep(1200);
+        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more failed send(s)"));
+    }
+
+    @Test(timeout = 20_000)
+    public void internalErrorsAreRateLimited() throws Exception {
+        AvoLog.windowMsForTesting = 500;
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        Map<String, Object> broken = new java.util.AbstractMap<String, Object>() {
+            @Override
+            public java.util.Set<Entry<String, Object>> entrySet() {
+                throw new IllegalStateException("boom");
+            }
+        };
+
+        for (int i = 0; i < 5; i++) {
+            inspector.trackSchemaFromEvent("Event", broken);
+        }
+        assertEquals(stderr(), 1, count(stderr(), "something went wrong"));
+
+        Thread.sleep(1200);
+        assertTrue(stderr(), stderr().contains("Avo Inspector: 4 more internal error(s)"));
+    }
+
+    @Test(timeout = 20_000)
     public void droppedEventsAreAlwaysLoggedAndRateLimited() throws Exception {
         AvoLog.windowMsForTesting = 500;
         AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey(API_KEY).appVersion("1.0.0")

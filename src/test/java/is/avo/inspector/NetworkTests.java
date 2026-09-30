@@ -285,6 +285,7 @@ public class NetworkTests {
             AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("dev");
             handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
 
+            AvoLog.resetForTesting();
             java.io.PrintStream originalErr = System.err;
             java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
             System.setErr(new java.io.PrintStream(captured, true, "UTF-8"));
