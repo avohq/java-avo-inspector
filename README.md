@@ -28,11 +28,32 @@ and:
 
 ```
     dependencies {
-        implementation 'com.github.avohq.java-avo-inspector:TAG'
+        implementation 'com.github.avohq:java-avo-inspector:TAG'
     }
 ```
 
-Use the latest GitHub release tag to get the latest version of the library.
+With Maven, add to the pom.xml:
+
+```xml
+    <repositories>
+      <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+      </repository>
+    </repositories>
+```
+
+and:
+
+```xml
+    <dependency>
+      <groupId>com.github.avohq</groupId>
+      <artifactId>java-avo-inspector</artifactId>
+      <version>TAG</version>
+    </dependency>
+```
+
+Use the latest GitHub release tag (e.g. `2.0.0`) as `TAG` to get the latest version of the library.
 
 # Initialization
 
