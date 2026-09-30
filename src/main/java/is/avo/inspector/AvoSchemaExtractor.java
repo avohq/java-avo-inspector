@@ -28,6 +28,22 @@ public class AvoSchemaExtractor {
 
 	// SPEC.md §9.3.2: beyond this depth a nested value is reported as an empty object.
 	static final int MAX_DEPTH = 10;
+	// Complex values expanded per extractSchema call, as in Node. Shared references that are not
+	// cycles could otherwise expand exponentially; past the budget a complex value is reported as
+	// "object", like the depth cap.
+	static final int MAX_EXPANSIONS = 10_000;
+
+	// The state of one extractSchema call: the containers on the path to the current value (by
+	// identity) and the complex values expanded so far.
+	private static final class Walk {
+		final Set<Object> ancestors = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+		int expansions;
+
+		Walk(Object root) {
+			ancestors.add(root);
+			expansions = 1;
+		}
+	}
 
 	@NotNull Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties, boolean shouldLogIfEnabled) {
 		Map<String, AvoEventSchemaType> result;
@@ -35,7 +51,7 @@ public class AvoSchemaExtractor {
 		if (eventProperties == null || eventProperties == JSONObject.NULL) {
 			result = new LinkedHashMap<>();
 		} else if (eventProperties instanceof Map || eventProperties instanceof JSONObject) {
-			result = mapObject(eventProperties, 0, newAncestors(eventProperties));
+			result = mapObject(eventProperties, 0, new Walk(eventProperties));
 		} else {
 			result = extractSchemaFromObject(eventProperties);
 		}
@@ -60,34 +76,35 @@ public class AvoSchemaExtractor {
 			eventPropertiesFields.addAll(Arrays.asList(fields));
 		}
 
+		Walk walk = new Walk(eventProperties);
 		for (Field eventPropertyField: eventPropertiesFields) {
-			AvoEventSchemaType propertyType = getAvoSchemaType(eventProperties, eventPropertyField);
+			AvoEventSchemaType propertyType = getAvoSchemaType(eventProperties, eventPropertyField, walk);
 			result.put(eventPropertyField.getName(), propertyType);
 		}
 		return result;
 	}
 
-	private AvoEventSchemaType getAvoSchemaType(Object eventProperties, Field eventPropertyField) {
+	private AvoEventSchemaType getAvoSchemaType(Object eventProperties, Field eventPropertyField, Walk walk) {
 		try {
-			return objectToAvoType(eventPropertyField.get(eventProperties), 0, newAncestors(eventProperties));
+			return objectToAvoType(eventPropertyField.get(eventProperties), 0, walk);
 		} catch (IllegalAccessException ignored) {
 			return new AvoEventSchemaType.AvoUnknownType();
 		}
 	}
 
 	// The object branch of mapping(): one entry per own property, in iteration order.
-	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth, Set<Object> ancestors) {
+	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth, Walk walk) {
 		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
 
 		if (object instanceof JSONObject) {
 			JSONObject json = (JSONObject) object;
 			for (Iterator<String> it = json.keys(); it.hasNext(); ) {
 				String key = it.next();
-				result.put(key, objectToAvoType(json.opt(key), depth, ancestors));
+				result.put(key, objectToAvoType(json.opt(key), depth, walk));
 			}
 		} else {
 			for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
-				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth, ancestors));
+				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth, walk));
 			}
 		}
 
@@ -95,34 +112,38 @@ public class AvoSchemaExtractor {
 	}
 
 	// The type of one property value, descending into objects and lists.
-	// ancestors: the containers on the path to val, by identity. A container that is its own
-	// ancestor is cut like the depth cap, so a cycle can neither recurse nor expand exponentially.
-	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth, Set<Object> ancestors) {
-		AvoEventSchemaType type = specType(val, depth, ancestors);
+	// A complex value is a leaf, reported as "object", when it is at the depth cap, is its own
+	// ancestor (a cycle), or the call's expansion budget is spent. Otherwise mapping it counts one
+	// expansion.
+	private AvoEventSchemaType objectToAvoType(@Nullable Object val, int depth, Walk walk) {
+		AvoEventSchemaType type = specType(val, depth, walk);
 		type.legacyOverride = legacyOverride(val);
 		return type;
 	}
 
-	private AvoEventSchemaType specType(@Nullable Object val, int depth, Set<Object> ancestors) {
-		if (isComplex(val) && (depth >= MAX_DEPTH || ancestors.contains(val))) {
+	private AvoEventSchemaType specType(@Nullable Object val, int depth, Walk walk) {
+		if (isComplex(val) && (depth >= MAX_DEPTH || walk.ancestors.contains(val) || walk.expansions >= MAX_EXPANSIONS)) {
 			return new AvoEventSchemaType.AvoTruncatedObject();
+		}
+		if (isComplex(val)) {
+			walk.expansions++;
 		}
 
 		if (isList(val)) {
-			ancestors.add(val);
+			walk.ancestors.add(val);
 			try {
-				return mapList(val, depth + 1, ancestors);
+				return mapList(val, depth + 1, walk);
 			} finally {
-				ancestors.remove(val);
+				walk.ancestors.remove(val);
 			}
 		}
 
 		if (isObject(val)) {
-			ancestors.add(val);
+			walk.ancestors.add(val);
 			try {
-				return new AvoEventSchemaType.AvoObject(mapObject(val, depth + 1, ancestors));
+				return new AvoEventSchemaType.AvoObject(mapObject(val, depth + 1, walk));
 			} finally {
-				ancestors.remove(val);
+				walk.ancestors.remove(val);
 			}
 		}
 
@@ -177,7 +198,7 @@ public class AvoSchemaExtractor {
 	// The array branch of mapping(), in one pass over the elements: the list type comes from the
 	// first element, each element is mapped, primitive types are deduplicated by value. Objects and
 	// nested lists are never merged (reference identity in the JS reference parser).
-	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Set<Object> ancestors) {
+	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Walk walk) {
 		Class<?> component = list.getClass().getComponentType();
 		if (component != null && component.isPrimitive()) {
 			// Every element has the component's type, so there is nothing to walk or box.
@@ -205,7 +226,7 @@ public class AvoSchemaExtractor {
 				elementType = isNull(element) ? "string" : basicType(element);
 				first = false;
 			}
-			AvoEventSchemaType mapped = objectToAvoType(element, depth, ancestors);
+			AvoEventSchemaType mapped = objectToAvoType(element, depth, walk);
 			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
 					|| mapped instanceof AvoEventSchemaType.AvoList;
 			if (nonPrimitive || seenPrimitives.add(mapped.getReportedName())) {
@@ -232,12 +253,6 @@ public class AvoSchemaExtractor {
 			return new AvoEventSchemaType.AvoString();
 		}
 		return new AvoEventSchemaType.AvoInt();
-	}
-
-	private static Set<Object> newAncestors(Object root) {
-		Set<Object> ancestors = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
-		ancestors.add(root);
-		return ancestors;
 	}
 
 	// getBasicPropType(): a nested list counts as "object".

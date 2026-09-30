@@ -189,6 +189,14 @@ Map<String, AvoEventSchemaType> schema = avoInspector.extractSchema(new HashMap<
 
 `extractSchema` never throws and makes no network calls.
 
+## Schema extraction limits
+
+Extraction stops expanding a map, list, array or `JSONObject` that is nested more than 10 levels
+deep, that contains itself, or that comes after the first 10,000 such values in one event (a value
+shared by many properties counts each time it appears). Such a value is reported as `"object"` with
+no children, or as the type `"object"` inside a list. Very large or cyclic payloads therefore take
+bounded time and memory.
+
 # Batching, flush and shutdown
 
 Outside dev, events are buffered in memory and sent in batches: when `batchSize` events are
