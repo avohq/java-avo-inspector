@@ -7,23 +7,97 @@ import org.json.JSONObject;
 
 import java.util.Map;
 
+/** The Avo Inspector API; {@link AvoInspector} is the implementation. */
 @SuppressWarnings("UnusedReturnValue")
 public interface Inspector {
 
+    /**
+     * Extracts the schema of an event's properties and queues it for the Inspector backend.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for another Avo source.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for the Inspector backend.
+     * Property order follows the map's iteration order.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties);
 
+    /**
+     * Extracts the schema of an event's properties and queues it for another Avo source.
+     * Property order follows the map's iteration order.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
+     */
     @NotNull
     Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
 
+    /** Queues an event schema you extracted yourself, e.g. with {@link #extractSchema(Object)}. */
     void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema);
 
+    /**
+     * Extracts the schema of an event's properties (SPEC.md §9) without sending anything.
+     * Never throws and makes no network calls.
+     */
     @NotNull
     Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties);
+
+    // The methods below were added in 2.0 as defaults, so implementations written against 1.x keep
+    // compiling. The defaults ignore streamId and options and delegate to the 1.x methods;
+    // AvoInspector implements them fully.
+
+    /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
+                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackSchemaFromEvent(eventName, eventProperties);
+    }
+
+    /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
+                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackSchemaFromEvent(eventName, eventProperties);
+    }
+
+    /** Tracks an event for another Avo source, with a stream id and gateway options. */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
+                                                               @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
+                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
+    }
+
+    /** Tracks an event for another Avo source, with a stream id and gateway options. */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
+                                                               @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
+                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+        return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
+    }
+
+    /** Sends every buffered event and waits up to 10 seconds for in-flight sends. */
+    default void flush() {
+    }
+
+    /** Sends every buffered event and waits up to {@code timeoutMs} for in-flight sends. */
+    default void flush(long timeoutMs) {
+    }
+
+    /** Terminates the instance, discarding buffered events. */
+    default void destroy() {
+    }
 }
