@@ -76,6 +76,10 @@ tasks.register('verifyVersionConstant') {
     }
 }
 check.dependsOn verifyVersionConstant
+// JitPack builds with assemble/install, not check: compiling runs the check too.
+tasks.named('compileJava') {
+    dependsOn verifyVersionConstant
+}
 
 // Conformance harness (runner-contract 1.1.0). Not part of the published artifact.
 sourceSets {
