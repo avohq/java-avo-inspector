@@ -40,6 +40,11 @@ class AvoBatcher {
     // One bounded pool runs the sends of every instance, so creating many instances cannot
     // multiply threads until thread creation fails.
     static final int SHARED_SEND_THREADS = 16;
+    // Targets (apiKey, appName) with their own buffer at once. A new target past this sends the
+    // least recently used target's buffer and takes its place, so the per-target map, and the
+    // cost of a track call, stay bounded however many targets there are.
+    static final int MAX_TARGETS = 100;
+
     // Events that may wait for a send slot, across all waiting sends. Separate from maxQueueSize,
     // which bounds only the unsent buffer; past this the oldest waiting events are dropped.
     static final int MAX_WAITING_EVENTS = 10_000;
@@ -75,7 +80,8 @@ class AvoBatcher {
     private final Object lock = new Object();
     // Guarded by lock: one buffer per (apiKey, appName), so each target's batches fill to
     // batchSize, and the events buffered across all of them.
-    private final LinkedHashMap<List<Object>, TargetBuffer> buffers = new LinkedHashMap<>();
+    // Access-ordered, so the first entry is the least recently used target.
+    private final LinkedHashMap<List<Object>, TargetBuffer> buffers = new LinkedHashMap<>(16, 0.75f, true);
     private int totalBuffered;
     private long nextSequence;
     private boolean destroyed;
@@ -235,7 +241,7 @@ class AvoBatcher {
      * is the event's own send when {@code batchSize == 1}.
      */
     List<Future<AvoNetworkCallsHandler.SendResult>> enqueue(@NotNull Map<String, Object> event) {
-        List<SendTask> sends = null;
+        List<SendTask> sends = new ArrayList<>();
         int dropped = 0;
         synchronized (lock) {
             if (destroyed) {
@@ -248,6 +254,14 @@ class AvoBatcher {
             List<Object> key = Arrays.asList(event.get("apiKey"), event.get("appName"));
             TargetBuffer target = buffers.get(key);
             if (target == null) {
+                if (buffers.size() >= MAX_TARGETS) {
+                    TargetBuffer leastRecent = buffers.values().iterator().next();
+                    if (leastRecent.events.isEmpty()) {
+                        retire(leastRecent);
+                    } else {
+                        sends.addAll(prepare(swap(leastRecent)));
+                    }
+                }
                 target = new TargetBuffer(key);
                 buffers.put(key, target);
             }
@@ -259,7 +273,7 @@ class AvoBatcher {
                 registerForShutdownFlush(this);
             }
             if (target.events.size() >= batchSize) {
-                sends = prepare(swap(target));
+                sends.addAll(prepare(swap(target)));
             } else if (timerEnabled && target.timer == null) {
                 armTimer(target);
             }
@@ -269,10 +283,10 @@ class AvoBatcher {
             AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
         }
         Runnable afterSwap = afterSwapForTesting;
-        if (sends != null && afterSwap != null) {
+        if (!sends.isEmpty() && afterSwap != null) {
             afterSwap.run();
         }
-        return sends != null ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
+        return !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
     }
 
     /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
@@ -342,6 +356,12 @@ class AvoBatcher {
 
     int pendingCount() {
         return inFlight.size();
+    }
+
+    int targetCountForTesting() {
+        synchronized (lock) {
+            return buffers.size();
+        }
     }
 
     int bufferedCount() {

@@ -203,7 +203,10 @@ bounded time and memory.
 Outside dev, events are buffered in memory and sent in batches: when `batchSize` events are
 buffered, when the oldest buffered event is `batchFlushSeconds` old, or when you call `flush()`.
 Each target (API key and app name, see [Override Avo source](#override-avo-source)) has its own
-buffer, so its batches fill to `batchSize`. In dev every event is sent immediately. When more than
+buffer, so its batches fill to `batchSize`. At most 100 targets have a buffer at once: an event
+for a new target beyond that sends the buffer of the least recently used target first (nothing is
+dropped), so the SDK's memory and the cost of a track call stay bounded however many targets you
+use. In dev every event is sent immediately. When more than
 `maxQueueSize` events are buffered in total the oldest are dropped.
 
 Delivery is at-most-once. Nothing is written to disk, failed requests are not retried, and the

@@ -268,4 +268,38 @@ public class AvoBatcherTests {
         assertEquals(30, total);
         assertEquals(6, delivered.size());
     }
+
+    @Test(timeout = 60_000)
+    public void thousandsOfTargetsStayBoundedAndLoseNothing() {
+        AvoBatcher batcher = batcher(recordingSender, 30, 1000, true);
+        int targets = 5000;
+        long firstNanos = 0;
+        long lastNanos = 0;
+        int maxTargets = 0;
+        for (int i = 0; i < targets; i++) {
+            Map<String, Object> event = event("E" + i);
+            event.put("apiKey", "key-" + i);
+            long start = System.nanoTime();
+            batcher.enqueue(event);
+            long took = System.nanoTime() - start;
+            if (i >= 500 && i < 1000) {
+                firstNanos += took;
+            } else if (i >= targets - 500) {
+                lastNanos += took;
+            }
+            maxTargets = Math.max(maxTargets, batcher.targetCountForTesting());
+        }
+        batcher.flush(10_000);
+
+        assertTrue("targets: " + maxTargets, maxTargets <= AvoBatcher.MAX_TARGETS);
+        int delivered = 0;
+        synchronized (sent) {
+            for (List<Map<String, Object>> batch : sent) {
+                delivered += batch.size();
+            }
+        }
+        assertEquals(targets, delivered);
+        // Flat: the last calls cost about what earlier ones did (generous bound for JIT and GC noise).
+        assertTrue("first " + firstNanos / 500 + " ns, last " + lastNanos / 500 + " ns", lastNanos < firstNanos * 5 + 5_000_000);
+    }
 }
