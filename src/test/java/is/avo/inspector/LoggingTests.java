@@ -280,6 +280,48 @@ public class LoggingTests {
     }
 
     @Test
+    @SuppressWarnings("ConstantConditions")
+    public void aMissingEventNameIsSentAsAPlaceholder() throws Exception {
+        String line = "Avo Inspector: %d event(s) tracked without an event name in the last 10s, sent as \"Missing Event Name\".";
+        AvoInspector prod = inspector(AvoInspectorEnv.Prod);
+        Map<String, AvoEventSchemaType> schema = prod.trackSchemaFromEvent(null, Collections.<String, Object>singletonMap("a", 1));
+        prod.trackSchemaFromEvent("", Collections.<String, Object>singletonMap("b", "x"));
+        prod.trackSchemaFromEvent("  ", Collections.<String, Object>singletonMap("c", true));
+        prod.flush();
+
+        assertEquals(1, schema.size());
+        // Sends run concurrently, so compare the set of events, not their arrival order.
+        assertEquals(3, server.requests().size());
+        java.util.Set<String> sentEvents = new java.util.TreeSet<>();
+        for (MockInspectorServer.Request request : server.requests()) {
+            org.json.JSONObject event = request.body.getJSONObject(0);
+            org.json.JSONObject property = event.getJSONArray("eventProperties").getJSONObject(0);
+            sentEvents.add(event.getString("eventName") + "|" + property.getString("propertyName") + "|" + property.getString("propertyType"));
+        }
+        assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList(
+                "Missing Event Name|a|int", "Missing Event Name|b|string", "Missing Event Name|c|boolean")), sentEvents);
+        assertEquals(stderr(), String.format(line, 1) + "\n", stderr());
+
+        pastTheWindow();
+        prod.trackSchema(null, Collections.<String, AvoEventSchemaType>singletonMap("d", new AvoEventSchemaType.AvoInt()));
+        prod.flush();
+        assertEquals(4, server.requests().size());
+        assertTrue(stderr(), stderr().endsWith(String.format(line, 3) + "\n"));
+
+        // Never throws, dev included; a valid name keeps its surrounding whitespace.
+        AvoInspector dev = inspector(AvoInspectorEnv.Dev);
+        assertEquals(1, dev.trackSchemaFromEvent(null, Collections.<String, Object>singletonMap("e", 1)).size());
+        dev.trackSchemaFromEvent("  Signed Up ", Collections.<String, Object>emptyMap());
+        dev.flush();
+        assertEquals(6, server.requests().size());
+        java.util.Set<String> devNames = new java.util.TreeSet<>();
+        for (MockInspectorServer.Request request : server.requests().subList(4, 6)) {
+            devNames.add(request.body.getJSONObject(0).getString("eventName"));
+        }
+        assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList("Missing Event Name", "  Signed Up ")), devNames);
+    }
+
+    @Test
     public void samplingDropsPrintNothingWithLoggingOff() {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.setSamplingRateForTesting(0.0);

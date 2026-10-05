@@ -127,6 +127,10 @@ avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
 ```
 Second parameter can also be a `JSONObject`.
 
+An event tracked with a `null`, empty or whitespace-only name is still sent, under the event name
+`Missing Event Name`, and a warning is printed (at most once every 10 seconds). A valid name is
+sent exactly as given, surrounding whitespace included.
+
 The method returns the extracted schema as soon as the event is queued; it never waits for the
 network. Property order follows the map's iteration order, so use a `LinkedHashMap` if order
 matters to you (a `JSONObject` does not keep insertion order).
@@ -313,7 +317,8 @@ avoInspector.flush();
     exception's class name only, never its message;
   - dropped events (`dropped N event(s) (queue full)` or `(send backlog full)`) and non-200
     responses (`N batch(es) rejected with HTTP <status>`);
-  - the warning for a stream id containing `:`;
+  - the warning for a stream id containing `:`, and for events tracked without an event name
+    (sent as `Missing Event Name`);
   - configuration warnings: invalid env, invalid batch options, and `batchSize` larger than
     `maxQueueSize`.
 

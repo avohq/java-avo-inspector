@@ -30,6 +30,9 @@ public class AvoInspector implements Inspector {
     static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "Avo Inspector: apiKey must not contain control characters";
     static final String NO_VERSION_MESSAGE = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
 
+    // Sent as the event name of an event tracked with a null, empty or whitespace-only name.
+    static final String MISSING_EVENT_NAME = "Missing Event Name";
+
     static final int DEFAULT_BATCH_SIZE = 30;
     static final double DEFAULT_BATCH_FLUSH_SECONDS = 30;
     static final int DEFAULT_MAX_QUEUE_SIZE = 1000;
@@ -301,6 +304,14 @@ public class AvoInspector implements Inspector {
     private List<Future<AvoNetworkCallsHandler.SendResult>> trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
                                                                                  @NotNull AvoInspectorTarget avoInspectorTarget,
                                                                                  @Nullable String streamId, @Nullable TrackOptions options) {
+        // eventName is a required string on the wire (SPEC.md §7.3.2). A missing one is reported
+        // under a placeholder rather than dropped (the cross-SDK rule); a valid name is sent as
+        // given, surrounding whitespace included.
+        //noinspection ConstantConditions
+        if (isBlank(eventName)) {
+            eventName = MISSING_EVENT_NAME;
+            AvoLog.missingEventName();
+        }
         if (eventSchema == null) {
             eventSchema = new LinkedHashMap<>();
         }

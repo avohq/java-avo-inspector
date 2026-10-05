@@ -73,6 +73,15 @@ final class AvoLog {
         }
     }
 
+    /** An event tracked with a null, empty or whitespace-only name, sent under the placeholder. */
+    static void missingEventName() {
+        long total = due("missing-event-name", 1);
+        if (total > 0) {
+            System.err.println("Avo Inspector: " + total + " event(s) tracked without an event name in the last 10s, sent as \""
+                    + AvoInspector.MISSING_EVENT_NAME + "\".");
+        }
+    }
+
     static void resetForTesting() {
         synchronized (windows) {
             windows.clear();
