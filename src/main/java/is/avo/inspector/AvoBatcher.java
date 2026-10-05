@@ -529,6 +529,7 @@ class AvoBatcher {
                     running--;
                 }
                 next.cancel(false);
+                AvoLog.dropped(next.eventCount, AvoLog.SEND_BACKLOG_FULL);
                 Util.logInternalError(e);
             }
         }
@@ -568,9 +569,16 @@ class AvoBatcher {
             this.events = events;
         }
 
+        // FutureTask would keep an Error from the send to itself, unlogged.
         @Override
         public AvoNetworkCallsHandler.SendResult call() {
-            return sender.send(events, apiKey);
+            try {
+                return sender.send(events, apiKey);
+            } catch (Throwable e) {
+                Util.restoreInterrupt(e);
+                Util.logInternalError(e);
+                return AvoNetworkCallsHandler.SendResult.FAILED;
+            }
         }
     }
 
