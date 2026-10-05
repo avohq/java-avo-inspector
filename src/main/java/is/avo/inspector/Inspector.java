@@ -7,7 +7,16 @@ import org.json.JSONObject;
 
 import java.util.Map;
 
-/** The Avo Inspector API; {@link AvoInspector} is the implementation. */
+/**
+ * The Avo Inspector API; {@link AvoInspector} is the implementation.
+ *
+ * <p>The methods added in 2.0 are default methods, so implementations written for 1.x keep
+ * compiling. A custom implementation that wraps an {@link AvoInspector} must override and forward
+ * {@link #flush()}, {@link #flush(long)} and {@link #destroy()}: their defaults do nothing, so a
+ * wrapper that does not forward them never sends buffered events on flush and never stops the
+ * instance it wraps. It should also forward the stream id and {@link TrackOptions} overloads,
+ * whose defaults call the 1.x methods and drop the stream id and options.
+ */
 @SuppressWarnings("UnusedReturnValue")
 public interface Inspector {
 

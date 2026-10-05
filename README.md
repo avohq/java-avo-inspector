@@ -84,8 +84,9 @@ AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
 ```
 
 Both constructors throw `IllegalArgumentException` when the API key is blank or contains a control
-character other than tab (for example CR, LF or NUL), or when the app version is blank. A missing or unknown env falls back to dev with a
-warning.
+character other than tab (for example CR, LF or NUL), or when the app version is blank. A missing
+(`null`) or unknown env falls back to dev with a warning on stderr, and the instance then behaves
+as dev: logging is on for the whole process and every event is sent immediately.
 
 # Enabling logs
 
@@ -165,6 +166,9 @@ and gateway options, use `trackSchemaFromEvent(eventName, properties, target, st
 
 All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
 methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
+If your implementation wraps an `AvoInspector`, forward `flush()`, `flush(long)` and `destroy()` to
+it: the defaults do nothing. Forward the stream id and `TrackOptions` overloads too; their defaults
+call the 1.x methods and drop the stream id and options.
 
 ### 2.
 

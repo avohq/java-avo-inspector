@@ -62,7 +62,12 @@ public final class AvoInspectorOptions {
             return this;
         }
 
-        /** Falls back to {@link AvoInspectorEnv#Dev} with a warning when {@code null}. */
+        /**
+         * The environment. {@code null}, or never calling this, falls back to
+         * {@link AvoInspectorEnv#Dev} with the stderr warning
+         * {@code Avo Inspector: Invalid env "null", falling back to "dev".}; the instance then logs
+         * (process-wide) and sends every event immediately.
+         */
         @NotNull
         public Builder env(@Nullable AvoInspectorEnv env) {
             this.env = env;
@@ -70,7 +75,10 @@ public final class AvoInspectorOptions {
             return this;
         }
 
-        /** "dev", "staging" or "prod"; any other value falls back to "dev" with a warning. */
+        /**
+         * "dev", "staging" or "prod" (exact, lower case). {@code null} or any other value falls back
+         * to dev with the stderr warning {@code Avo Inspector: Invalid env "<value>", falling back to "dev".}
+         */
         @NotNull
         public Builder env(@Nullable String env) {
             this.env = null;

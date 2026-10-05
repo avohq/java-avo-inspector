@@ -14,6 +14,14 @@ import static is.avo.inspector.Util.handleException;
 /**
  * Sends event schemas to Avo Inspector (SPEC.md §4). Outside dev, events are buffered and sent in
  * batches; call {@link #flush()} before the process exits. Safe to use from multiple threads.
+ *
+ * <p><b>Testing only:</b> when the environment variable {@code AVO_INSPECTOR_MOCK_ENDPOINT} is set
+ * to a non-empty value, a dev or staging instance sends to that URL, used as-is (no path is
+ * appended), instead of {@code https://api.avo.app/inspector/v2/track}. The variable is read
+ * before every send. A prod instance always ignores it. Nothing is logged when it is used, and a
+ * value that is not a valid http(s) URL is not reported when the instance is built: each send then
+ * fails, printing {@code Avo Inspector: schema sending failed: Request failed.} (at most once
+ * every 10 seconds). Do not set it outside tests.
  */
 public class AvoInspector implements Inspector {
 
@@ -48,6 +56,12 @@ public class AvoInspector implements Inspector {
     private volatile boolean destroyed = false;
 
     /**
+     * <p>A {@code null} env (or, with the options builder, none set) falls back to
+     * {@link AvoInspectorEnv#Dev}: the constructor prints
+     * {@code Avo Inspector: Invalid env "null", falling back to "dev".} to stderr and the instance
+     * then behaves as dev: logging is turned on for the whole process and every event is sent
+     * immediately (batching is off).
+     *
      * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
      *                                  {@code apiKey} contains a control character other than tab
      */
@@ -56,6 +70,12 @@ public class AvoInspector implements Inspector {
     }
 
     /**
+     * <p>A {@code null} env (or, with the options builder, none set) falls back to
+     * {@link AvoInspectorEnv#Dev}: the constructor prints
+     * {@code Avo Inspector: Invalid env "null", falling back to "dev".} to stderr and the instance
+     * then behaves as dev: logging is turned on for the whole process and every event is sent
+     * immediately (batching is off).
+     *
      * @throws IllegalArgumentException when {@code apiKey} or {@code appVersion} is blank, or
      *                                  {@code apiKey} contains a control character other than tab
      */
