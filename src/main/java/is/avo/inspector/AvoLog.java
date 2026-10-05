@@ -15,6 +15,7 @@ final class AvoLog {
 
     static final String QUEUE_FULL = "queue full";
     static final String SEND_BACKLOG_FULL = "send backlog full";
+    static final String INTERNAL_ERROR = "internal error";
 
     interface Clock {
         long nanoTime();

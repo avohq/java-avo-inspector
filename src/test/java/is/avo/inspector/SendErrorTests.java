@@ -58,7 +58,8 @@ public class SendErrorTests {
         try {
             batcher.enqueue(event("E1"));
             batcher.flush(5000);
-            assertTrue(stderr(), stderr().contains("Avo Inspector: something went wrong. Please report to support@avo.app."));
+            assertTrue(stderr(), stderr().contains("Avo Inspector: dropped 1 event(s) (internal error) in the last 10s."));
+            assertTrue(stderr(), stderr().contains("Avo Inspector: something went wrong. Please report to support@avo.app. (java.lang.StackOverflowError)"));
             assertEquals(0, batcher.pendingCount());
         } finally {
             batcher.destroy();
@@ -83,7 +84,8 @@ public class SendErrorTests {
             for (int i = 0; i < 3; i++) {
                 batcher.enqueue(event("E" + i));
             }
-            assertTrue(stderr(), stderr().contains("Avo Inspector: dropped 3 event(s) (send backlog full) in the last 10s."));
+            assertTrue(stderr(), stderr().contains("Avo Inspector: dropped 3 event(s) (internal error) in the last 10s."));
+            assertTrue(stderr(), stderr().contains("Avo Inspector: something went wrong. Please report to support@avo.app. (java.lang.OutOfMemoryError)"));
             assertEquals(0, batcher.pendingCount());
         } finally {
             batcher.destroy();

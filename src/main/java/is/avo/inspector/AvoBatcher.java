@@ -549,7 +549,7 @@ class AvoBatcher {
                     running--;
                 }
                 next.cancel(false);
-                AvoLog.dropped(next.eventCount, AvoLog.SEND_BACKLOG_FULL);
+                AvoLog.dropped(next.eventCount, AvoLog.INTERNAL_ERROR);
                 Util.logInternalError(e);
             }
         }
@@ -596,6 +596,7 @@ class AvoBatcher {
                 return sender.send(events, apiKey);
             } catch (Throwable e) {
                 Util.restoreInterrupt(e);
+                AvoLog.dropped(events.size(), AvoLog.INTERNAL_ERROR);
                 Util.logInternalError(e);
                 return AvoNetworkCallsHandler.SendResult.FAILED;
             }

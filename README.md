@@ -315,7 +315,8 @@ avoInspector.flush();
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
   - internal errors (`Avo Inspector: something went wrong... (<exception class>)`), with the
     exception's class name only, never its message;
-  - dropped events (`dropped N event(s) (queue full)` or `(send backlog full)`) and non-200
+  - dropped events (`dropped N event(s) (queue full)`, `(send backlog full)` or `(internal
+    error)` for a send that could not be started or failed with an error) and non-200
     responses (`N batch(es) rejected with HTTP <status>`);
   - the warning for a stream id containing `:`, and for events tracked without an event name
     (sent as `Missing Event Name`);
