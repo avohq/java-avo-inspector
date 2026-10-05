@@ -53,11 +53,15 @@ final class AvoLog {
         }
     }
 
-    /** An internal error; the error is appended to the line. */
+    /**
+     * An internal error, logged with its class name only, as in Node: its message or toString()
+     * could carry text from a property value (a throwing getter or toString()), and getName()
+     * runs no user code.
+     */
     static void internal(Throwable error) {
         long total = due("internal", 1);
         if (total > 0) {
-            System.err.println(Util.INTERNAL_ERROR_MESSAGE + more(total) + " " + error);
+            System.err.println(Util.INTERNAL_ERROR_MESSAGE + more(total) + " (" + error.getClass().getName() + ")");
         }
     }
 

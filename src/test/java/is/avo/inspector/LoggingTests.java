@@ -232,7 +232,7 @@ public class LoggingTests {
         pastTheWindow();
         inspector.trackSchemaFromEvent("Event", broken);
         assertTrue(stderr(), stderr().contains(
-                "Avo Inspector: something went wrong. Please report to support@avo.app. (4 more in the last 10s) java.lang.IllegalStateException: boom"));
+                "Avo Inspector: something went wrong. Please report to support@avo.app. (4 more in the last 10s) (java.lang.IllegalStateException)"));
     }
 
     @Test
@@ -248,6 +248,35 @@ public class LoggingTests {
         inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap(), "user:42", null);
         assertTrue(stderr(), stderr().contains("streamId contains ':'; using the value verbatim. (4 more in the last 10s)"));
         assertFalse(stderr(), stderr().contains("user:42"));
+    }
+
+    @Test
+    public void internalErrorsLogTheExceptionTypeNeverItsText() {
+        AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
+        Map<String, Object> throwingMap = new java.util.AbstractMap<String, Object>() {
+            @Override
+            public java.util.Set<Entry<String, Object>> entrySet() {
+                throw new IllegalStateException("MARKER-map-alice@example.com");
+            }
+        };
+        Map<Object, Object> throwingKey = new java.util.HashMap<>();
+        throwingKey.put(new Object() {
+            @Override
+            public String toString() {
+                throw new IllegalStateException("MARKER-key-alice@example.com");
+            }
+        }, "value");
+
+        inspector.trackSchemaFromEvent("Event", throwingMap);
+        pastTheWindow();
+        inspector.extractSchema(throwingKey);
+        pastTheWindow();
+        @SuppressWarnings("unchecked")
+        Map<String, ?> keyMap = (Map<String, ?>) (Map<?, ?>) throwingKey;
+        inspector.trackSchemaFromEvent("Event", keyMap);
+
+        assertEquals(stderr(), 3, count(stderr(), "Avo Inspector: something went wrong. Please report to support@avo.app. (java.lang.IllegalStateException)"));
+        assertFalse(stderr(), stderr().contains("MARKER"));
     }
 
     @Test

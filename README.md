@@ -302,7 +302,8 @@ avoInspector.flush();
 - **Some messages always go to stderr**, whatever `enableLogging`:
   - a send that fails because of a network error, a timeout, or an API key the header check
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
-  - internal errors (`Avo Inspector: something went wrong...`);
+  - internal errors (`Avo Inspector: something went wrong... (<exception class>)`), with the
+    exception's class name only, never its message;
   - dropped events (`dropped N event(s) (queue full)` or `(send backlog full)`) and non-200
     responses (`N batch(es) rejected with HTTP <status>`);
   - the warning for a stream id containing `:`;
