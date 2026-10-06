@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0
+## 2.0.0 (2026-10-06)
 
 Implements [avohq/spec-first-inspector-server-sdk](https://github.com/avohq/spec-first-inspector-server-sdk) v3.0.1: the `/inspector/v2/track` endpoint with the `api-key`, `env` and `X-Avo-Client` headers, gzip for bodies of 1 KiB or more, batching with `flush()` and `destroy()`, stream ids and gateway options (`TrackOptions`). This is a breaking release; see [Upgrading from 1.x to 2.0](README.md#upgrading-from-1x-to-20) in the README. Every existing constructor and method is still there.
 
@@ -35,6 +35,8 @@ Delivery and robustness:
 - **Logging never changes whether an event is tracked.** A property whose `toString()` throws no longer makes a dev track call throw from the log line.
 - **An event without a name is sent as `Missing Event Name`.** A `null`, empty or whitespace-only event name used to go out without its `eventName` field; the event is now sent like any other under that placeholder, its schema is returned, and a warning is printed at most once every 10 seconds. It never throws, in dev either.
 - **Nothing escapes a track call outside dev**, not even an `Error` such as `StackOverflowError` raised while handling an event: the call logs it and returns an empty schema. In dev it is rethrown as the documented `RuntimeException`. An interrupt raised inside the SDK leaves the thread's interrupt flag set.
+- **A `null` or unrecognised env falls back to dev** with a warning on stderr, where 1.x threw a `NullPointerException`. A dev instance turns logging on for the whole process and sends every event immediately, so always pass the env in production.
+- **Track methods return the extracted schema as soon as the event is queued**, whatever the server later answers, including a non-200; 1.x could return an empty result because of the response. The returned map keeps the input's property order.
 - **The sampling rate changes only on a 200 that carries a numeric `samplingRate` in [0, 1].** A `{"success":false}` response no longer throws on the send thread.
 - **Failed sends, dropped events, non-200 responses and internal errors are always printed to stderr**, whatever `enableLogging`, each kind at most once every 10 seconds; the count of what was suppressed is carried into the next line of that kind, or printed by `flush()` once its 10 seconds have passed and right away by `destroy()` and the shutdown hook, with the real number of seconds it covers (the same rule as the Node and Go SDKs, with no timer); the `:`-in-stream-id warning is limited the same way; the API key and request bodies are never logged. The dev log line "Saved event" is now "Queued event", printed only for events that pass sampling, with the schema as the JSON sent on the wire.
 
@@ -42,3 +44,5 @@ Build:
 
 - Built with Gradle 8.12 and compiled for Java 8 (`--release 8` on newer JDKs). The JUnit 4 tests now actually run.
 - **`org.jetbrains:annotations` is no longer a runtime dependency.** Its annotations are only needed to compile the SDK, so the published POM lists just `org.json`.
+- **A stray `resource` file is no longer packaged in the jar.**
+- **Every compile checks that `AvoInspectorVersion.VERSION` matches the project version**, including JitPack's `assemble`/`install` build, so a release can't ship with a wrong `libVersion`.
