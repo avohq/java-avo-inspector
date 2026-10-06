@@ -395,6 +395,8 @@ public class AvoInspector implements Inspector {
             Util.restoreInterrupt(e);
             Util.logInternalError(e);
         }
+        // Report what the log limiter is still holding back (the cross-SDK logging rule).
+        AvoLog.flushPending();
     }
 
     /**
@@ -407,6 +409,7 @@ public class AvoInspector implements Inspector {
         destroyed = true;
         batcher.destroy();
         networkCallsHandler.abortAll();
+        AvoLog.flushPending();
     }
 
     // Test-only (runner-contract precondition.samplingRate); deliberately not public.

@@ -261,7 +261,7 @@ busy wait their turn, and up to 10,000 events can wait. Beyond that the oldest w
 dropped. `maxQueueSize` bounds only the events not yet in a batch.
 
 Dropped events are always reported on stderr, whatever `enableLogging`, for example
-`Avo Inspector: dropped 8 event(s) (send backlog full) in the last 10s.` (or `queue full` when
+`Avo Inspector: dropped 8 event(s) (send backlog full) in the last 3s.` (or `queue full` when
 `maxQueueSize` is exceeded); so are non-200 responses. If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
@@ -324,9 +324,11 @@ avoInspector.flush();
     `maxQueueSize`.
 
   Each kind of message (per drop reason, HTTP status and failure) is printed at most once every 10
-  seconds: the first occurrence at once, later ones counted and included in the next line after
-  the 10 seconds (`... in the last 10s`, or `(N more in the last 10s)`). The limiter uses no
-  timer or thread.
+  seconds: the first occurrence at once, later ones counted. The count is printed by the next line
+  of that kind after the 10 seconds, or right away by `flush()`, `destroy()` and the shutdown hook,
+  so a burst followed by quiet is still reported. `in the last Ns` (or `(N more in the last Ns)`)
+  gives the real number of seconds since the first of those occurrences. The limiter uses no timer
+  or thread.
 
   Everything else follows the logging flag, which is on by default in dev, including events
   dropped by sampling. The dev log line "Saved event" is now "Queued event", and the "Supplied event … with params"

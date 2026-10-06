@@ -234,6 +234,7 @@ class AvoBatcher {
         for (AvoBatcher batcher : batchers) {
             batcher.awaitInFlight(deadline);
         }
+        AvoLog.flushPending();
     }
 
     /**
@@ -688,7 +689,8 @@ class AvoBatcher {
         Class<?>[] used = {
                 SendTask.class, SendCall.class, SendRunner.class, TimerFlush.class, TargetBuffer.class,
                 HookRemovalCheck.class, ShutdownFlush.class,
-                AvoLog.class,
+                AvoLog.class, AvoLog.Window.class, AvoLog.Line.class, AvoLog.Counted.class, AvoLog.Dropped.class,
+                AvoLog.Rejected.class, AvoLog.MissingEventName.class, AvoLog.More.class,
                 AvoNetworkCallsHandler.class, AvoNetworkCallsHandler.SendResult.class, AvoNetworkCallsHandler.Disconnect.class,
                 Util.class, AvoInspector.class,
                 org.json.JSONObject.class, org.json.JSONArray.class, org.json.JSONString.class, org.json.JSONException.class,
