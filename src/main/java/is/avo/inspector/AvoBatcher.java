@@ -280,14 +280,48 @@ class AvoBatcher {
             }
         }
 
-        if (dropped > 0) {
-            AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
+        try {
+            if (dropped > 0) {
+                AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
+            }
+            Runnable afterSwap = afterSwapForTesting;
+            if (!sends.isEmpty() && afterSwap != null) {
+                afterSwap.run();
+            }
+            return !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
+        } catch (Throwable e) {
+            abandon(sends, e);
+            return Collections.emptyList();
         }
-        Runnable afterSwap = afterSwapForTesting;
-        if (!sends.isEmpty() && afterSwap != null) {
-            afterSwap.run();
+    }
+
+    // The prepared sends are in flight from prepare() on; if an Error stops them before the send
+    // queue takes them, nothing would ever complete them and flush() would wait out its timeout.
+    // Takes them out of the queue, completes them as dropped and reports them.
+    private void abandon(List<SendTask> sends, Throwable error) {
+        try {
+            int abandoned = 0;
+            synchronized (sendQueueLock) {
+                for (SendTask send : sends) {
+                    if (waiting.remove(send)) {
+                        queuedEvents -= send.eventCount;
+                    }
+                }
+            }
+            for (SendTask send : sends) {
+                // cancel() runs done(): the in-flight entry and the shutdown registration go.
+                if (send.cancel(false)) {
+                    abandoned += send.eventCount;
+                }
+            }
+            if (abandoned > 0) {
+                AvoLog.dropped(abandoned, AvoLog.INTERNAL_ERROR);
+            }
+            Util.restoreInterrupt(error);
+            Util.logInternalError(error);
+        } catch (Throwable ignored) {
+            // Best effort while already failing.
         }
-        return !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
     }
 
     /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
@@ -314,7 +348,11 @@ class AvoBatcher {
             }
         }
         if (!sends.isEmpty()) {
-            submit(sends);
+            try {
+                submit(sends);
+            } catch (Throwable e) {
+                abandon(sends, e);
+            }
         }
         return true;
     }
@@ -455,8 +493,8 @@ class AvoBatcher {
 
         @Override
         public void run() {
+            List<SendTask> sends = Collections.emptyList();
             try {
-                List<SendTask> sends;
                 synchronized (lock) {
                     if (destroyed || buffers.get(target.key) != target || target.generation != armedGeneration) {
                         return;
@@ -470,7 +508,7 @@ class AvoBatcher {
                 }
                 submit(sends);
             } catch (Throwable e) {
-                Util.logInternalError(e);
+                abandon(sends, e);
             }
         }
     }

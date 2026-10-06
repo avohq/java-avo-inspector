@@ -91,4 +91,37 @@ public class SendErrorTests {
             batcher.destroy();
         }
     }
+
+    @Test(timeout = 10_000)
+    public void anErrorBetweenPrepareAndSubmitLeavesNothingInFlight() {
+        AvoBatcher batcher = new AvoBatcher(new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        }, 2, 30, 1000, true);
+        // Runs after the batch is prepared (in flight) and before it is handed to the send queue.
+        batcher.afterSwapForTesting = new Runnable() {
+            @Override
+            public void run() {
+                throw new OutOfMemoryError("between prepare and submit");
+            }
+        };
+        try {
+            try {
+                batcher.enqueue(event("E1"));
+                batcher.enqueue(event("E2"));
+            } catch (Throwable ignored) {
+                // Before the fix the Error escaped here; either way the batch must not stay in flight.
+            }
+            assertEquals(0, batcher.pendingCount());
+            assertTrue(!AvoBatcher.isRegisteredForShutdownFlush(batcher));
+            long start = System.nanoTime();
+            batcher.flush(5000);
+            assertTrue("flush waited", System.nanoTime() - start < 1_000_000_000L);
+            assertTrue(stderr(), stderr().contains("Avo Inspector: dropped 2 event(s) (internal error) in the last 1s."));
+        } finally {
+            batcher.destroy();
+        }
+    }
 }
