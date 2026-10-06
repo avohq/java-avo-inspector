@@ -281,15 +281,23 @@ for (int i = 0; i < rows.size(); i++) {
         avoInspector.flush();
     }
 }
-while (!avoInspector.flush()) {
-    // keep waiting until nothing is buffered, waiting or in flight
+// Once nothing else tracks on this instance, drain it, giving up after 5 minutes.
+long deadline = System.currentTimeMillis() + 5 * 60_000;
+boolean drained = avoInspector.flush();
+while (!drained && System.currentTimeMillis() < deadline) {
+    drained = avoInspector.flush();
+}
+if (!drained) {
+    // work is still buffered, waiting or in flight; failures and drops are on stderr
 }
 ```
 
 A single `flush()` waits at most 10 seconds, and up to 10,000 events can be waiting behind the 4
-requests, so the last `flush()` may return `false` with batches still to send. Calling it again
-until it returns `true` always ends: each request gives up after 10 seconds, so every waiting batch
-is eventually sent or dropped.
+requests, so the last `flush()` may return `false` with batches still to send. Once no other thread
+tracks on the instance, calling it again until it returns `true` ends: each request gives up after
+10 seconds, so every waiting batch is eventually sent or dropped. While other threads keep
+tracking, `flush()` can keep returning `false`, so stop them first and bound the loop with a
+deadline, as above.
 
 # Upgrading from 1.x to 2.0
 
