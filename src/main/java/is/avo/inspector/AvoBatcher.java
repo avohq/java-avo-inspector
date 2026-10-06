@@ -234,7 +234,7 @@ class AvoBatcher {
         for (AvoBatcher batcher : batchers) {
             batcher.awaitInFlight(deadline);
         }
-        AvoLog.flushPending();
+        AvoLog.flushPending(false);
     }
 
     /**

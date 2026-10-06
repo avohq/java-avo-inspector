@@ -163,17 +163,29 @@ public class LoggingTests {
     }
 
     @Test
-    public void flushReportsTheRestOfABurstWithTheRealSeconds() {
+    public void flushReportsTheRestOfABurstOnlyOnceItsWindowHasExpired() {
         AvoInspector inspector = overflowingInspector();
         now += java.util.concurrent.TimeUnit.SECONDS.toNanos(3);
         inspector.flush();
+        assertEquals(stderr(), "Avo Inspector: dropped 1 event(s) (queue full) in the last 1s.\n", stderr());
+
+        now += java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        inspector.flush();
         assertEquals(stderr(), "Avo Inspector: dropped 1 event(s) (queue full) in the last 1s.\n"
-                + "Avo Inspector: dropped 18 event(s) (queue full) in the last 3s.\n", stderr());
+                + "Avo Inspector: dropped 18 event(s) (queue full) in the last 13s.\n", stderr());
 
         // Nothing is left pending: a second flush prints nothing more.
         int length = stderr().length();
         inspector.flush();
         assertEquals(length, stderr().length());
+    }
+
+    @Test
+    public void destroyReportsAPendingCountWithinItsWindow() {
+        AvoInspector inspector = overflowingInspector();
+        now += java.util.concurrent.TimeUnit.SECONDS.toNanos(3);
+        inspector.destroy();
+        assertTrue(stderr(), stderr().endsWith("Avo Inspector: dropped 18 event(s) (queue full) in the last 3s.\n"));
     }
 
     @Test
@@ -229,8 +241,11 @@ public class LoggingTests {
         }
         inspector.flush();
         assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 1 batch(es) rejected with HTTP 500 in the last 1s."));
-        // flush() reports what the window suppressed.
-        assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 4 batch(es) rejected with HTTP 500 in the last 1s."));
+        // Within the window flush() leaves the count pending; once it has expired, flush() reports it.
+        assertEquals(stderr(), 1, count(stderr(), "rejected with HTTP"));
+        pastTheWindow();
+        inspector.flush();
+        assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 4 batch(es) rejected with HTTP 500 in the last 11s."));
 
         server.respond(400, "{}");
         inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
@@ -248,8 +263,11 @@ public class LoggingTests {
             inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
         }
         inspector.flush();
+        assertEquals(stderr(), "Avo Inspector: schema sending failed: Request failed.\n", stderr());
+        pastTheWindow();
+        inspector.flush();
         assertEquals(stderr(), "Avo Inspector: schema sending failed: Request failed.\n"
-                + "Avo Inspector: schema sending failed: Request failed. (4 more in the last 1s)\n", stderr());
+                + "Avo Inspector: schema sending failed: Request failed. (4 more in the last 11s)\n", stderr());
     }
 
     @Test
@@ -337,13 +355,13 @@ public class LoggingTests {
         }
         assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList(
                 "Missing Event Name|a|int", "Missing Event Name|b|string", "Missing Event Name|c|boolean")), sentEvents);
-        assertEquals(stderr(), String.format(line, 1, 1) + "\n" + String.format(line, 2, 1) + "\n", stderr());
+        assertEquals(stderr(), String.format(line, 1, 1) + "\n", stderr());
 
         pastTheWindow();
         prod.trackSchema(null, Collections.<String, AvoEventSchemaType>singletonMap("d", new AvoEventSchemaType.AvoInt()));
         prod.flush();
         assertEquals(4, server.requests().size());
-        assertTrue(stderr(), stderr().endsWith(String.format(line, 1, 1) + "\n"));
+        assertTrue(stderr(), stderr().endsWith(String.format(line, 3, 11) + "\n"));
 
         // Never throws, dev included; a valid name keeps its surrounding whitespace.
         AvoInspector dev = inspector(AvoInspectorEnv.Dev);

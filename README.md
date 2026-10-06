@@ -325,8 +325,9 @@ avoInspector.flush();
 
   Each kind of message (per drop reason, HTTP status and failure) is printed at most once every 10
   seconds: the first occurrence at once, later ones counted. The count is printed by the next line
-  of that kind after the 10 seconds, or right away by `flush()`, `destroy()` and the shutdown hook,
-  so a burst followed by quiet is still reported. `in the last Ns` (or `(N more in the last Ns)`)
+  of that kind after the 10 seconds; by `flush()` once those 10 seconds have passed; and right away
+  by `destroy()` and the shutdown hook. So a burst followed by quiet is still reported, and calling
+  `flush()` often does not undo the limit. `in the last Ns` (or `(N more in the last Ns)`)
   gives the real number of seconds since the first of those occurrences. The limiter uses no timer
   or thread.
 

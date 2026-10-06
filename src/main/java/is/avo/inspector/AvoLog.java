@@ -70,17 +70,19 @@ final class AvoLog {
     }
 
     /**
-     * Prints, right away, the count every window has suppressed since its last line, and forgets
-     * those windows. Called on flush(), destroy() and the shutdown drain, so a burst followed by
-     * quiet is still reported.
+     * Prints, right away, the count each window has suppressed since its last line, and forgets
+     * those windows, so a burst followed by quiet is still reported. flush() passes
+     * onlyExpired = true: a window still within its 10 s keeps its count pending, so calling
+     * flush() often does not undo the rate limit. destroy() and the shutdown drain print every
+     * pending count.
      */
-    static void flushPending() {
+    static void flushPending(boolean onlyExpired) {
         List<String> lines = new ArrayList<>();
         long now = now();
         synchronized (windows) {
             for (Iterator<Window> it = windows.values().iterator(); it.hasNext(); ) {
                 Window window = it.next();
-                if (window.suppressed > 0) {
+                if (window.suppressed > 0 && (!onlyExpired || now - window.start >= WINDOW_NANOS)) {
                     lines.add(window.line.pending(window.suppressed, seconds(now - window.start)));
                     it.remove();
                 }
