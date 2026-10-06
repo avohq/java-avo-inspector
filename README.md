@@ -281,23 +281,24 @@ for (int i = 0; i < rows.size(); i++) {
         avoInspector.flush();
     }
 }
-// Once nothing else tracks on this instance, drain it, giving up after 5 minutes.
-long deadline = System.currentTimeMillis() + 5 * 60_000;
-boolean drained = avoInspector.flush();
-while (!drained && System.currentTimeMillis() < deadline) {
+// Drain with a bounded number of attempts (each waits up to 10 s), then give up.
+boolean drained = false;
+for (int attempt = 0; attempt < 6 && !drained; attempt++) {
     drained = avoInspector.flush();
 }
 if (!drained) {
-    // work is still buffered, waiting or in flight; failures and drops are on stderr
+    System.err.println("Avo Inspector did not drain; some events may not have been sent");
 }
 ```
 
 A single `flush()` waits at most 10 seconds, and up to 10,000 events can be waiting behind the 4
-requests, so the last `flush()` may return `false` with batches still to send. Once no other thread
-tracks on the instance, calling it again until it returns `true` ends: each request gives up after
-10 seconds, so every waiting batch is eventually sent or dropped. While other threads keep
-tracking, `flush()` can keep returning `false`, so stop them first and bound the loop with a
-deadline, as above.
+requests, so the last `flush()` may return `false` with batches still to send. Each attempt shrinks
+the backlog, but draining can take minutes, longer than these attempts allow: against a slow or
+unresponsive endpoint every request uses its full 10 seconds, so 5,000 waiting events (about 167
+batches, 4 at a time) take about 7 minutes. Concurrent tracking from other threads can also keep
+`flush()` from ever seeing the instance drained. That is why the loop is bounded. To wait longer,
+pass a longer timeout to each attempt, for example `flush(60_000)`. Failed sends and dropped events
+are reported on stderr.
 
 # Upgrading from 1.x to 2.0
 
