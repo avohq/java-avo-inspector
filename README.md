@@ -265,17 +265,24 @@ Dropped events are always reported on stderr, whatever `enableLogging`, for exam
 `maxQueueSize` is exceeded); so are non-200 responses. If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
-- in a backfill or import script that tracks faster than that, call `flush()` every few thousand
-  events so the waiting batches drain:
+- in a backfill or import script that tracks faster than that, flush every few thousand events
+  so the waiting batches drain before you track more.
+
+`flush()` waits at most 10 seconds; against a slow or failing endpoint it can return while sends are
+still running, and the next chunk can then still push the oldest waiting events out. Give the
+backfill's flush a timeout long enough for a whole chunk to drain even when every request hangs:
+each request gives up after 10 seconds and 4 run at once, so 5,000 events (about 170 batches of
+30) need at most about 7 minutes.
 
 ```java
+long chunkTimeoutMs = 10 * 60 * 1000; // enough for 5,000 events against a hanging endpoint
 for (int i = 0; i < rows.size(); i++) {
     avoInspector.trackSchemaFromEvent(rows.get(i).eventName, rows.get(i).properties);
     if (i % 5000 == 4999) {
-        avoInspector.flush();
+        avoInspector.flush(chunkTimeoutMs);
     }
 }
-avoInspector.flush();
+avoInspector.flush(chunkTimeoutMs);
 ```
 
 # Upgrading from 1.x to 2.0
