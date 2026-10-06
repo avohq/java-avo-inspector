@@ -47,7 +47,15 @@ class MockInspectorServer implements AutoCloseable {
     private volatile java.util.concurrent.CountDownLatch hold;
 
     MockInspectorServer() throws IOException {
+        this(false);
+    }
+
+    // concurrent: answers requests in parallel, as the real API does, instead of one at a time.
+    MockInspectorServer(boolean concurrent) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        if (concurrent) {
+            server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        }
         server.createContext("/", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {

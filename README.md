@@ -80,6 +80,7 @@ AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
         .batchFlushSeconds(30)        // optional, default 30
         .maxQueueSize(1000)           // optional, default 1000
         .disableBatchTimer(false)     // optional, default false; set true in serverless
+        .blockWhenBacklogged(false)   // optional, default false; set true in backfill and batch jobs
         .build());
 ```
 
@@ -276,8 +277,22 @@ non-200 responses. Events lost to SIGKILL, `Runtime.halt()`, a JVM crash or `des
 reported, because no SDK code runs (or, for `destroy()`, you discarded them). If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
-- in a backfill or import script that tracks faster than that, call `flush()` every few thousand
-  events so the waiting batches drain:
+- in a backfill, import or other batch job, set `blockWhenBacklogged(true)`: a track call that
+  leaves 1,000 or more events waiting for a send slot then waits until fewer are waiting, so the
+  loop slows down to the rate the API accepts instead of dropping events. Each wait lasts at most
+  10 seconds (the request timeout), so a slow or unresponsive API slows the loop but never stops
+  it, and the backlog can still overflow then; an interrupt or `destroy()` ends the wait. Don't set
+  it for request threads in a server: they would then wait whenever the Inspector API is slow.
+
+```java
+AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
+        .apiKey("MY_API_KEY").env(AvoInspectorEnv.Prod).appVersion("1.0.0")
+        .batchSize(100)
+        .blockWhenBacklogged(true)
+        .build());
+```
+
+- otherwise, call `flush()` every few thousand events so the waiting batches drain:
 
 ```java
 for (int i = 0; i < rows.size(); i++) {

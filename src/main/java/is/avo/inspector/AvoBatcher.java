@@ -50,6 +50,11 @@ class AvoBatcher {
     static final int MAX_WAITING_EVENTS = 10_000;
     // Test-only: a smaller allowance.
     static volatile int maxWaitingEvents = MAX_WAITING_EVENTS;
+    // With blockWhenBacklogged, a track call that leaves this many events waiting for a send slot
+    // waits until fewer are waiting, at most backlogWaitMs per call.
+    static final int BACKLOG_BLOCK_EVENTS = 1_000;
+    // Test-only: a shorter wait.
+    static volatile long backlogWaitMs = AvoNetworkCallsHandler.TIMEOUT_MS;
     private static final ThreadPoolExecutor sharedSendPool = newSharedSendPool();
     // Test-only replacement for the shared pool (e.g. one that fails to start a thread).
     @Nullable static volatile java.util.concurrent.Executor sendExecutorForTesting;
@@ -76,6 +81,7 @@ class AvoBatcher {
     private final int batchSize;
     private final int maxQueueSize;
     private final long flushMillis;
+    private final boolean blockWhenBacklogged;
 
     private final Object lock = new Object();
     // Guarded by lock: one buffer per (apiKey, appName), so each target's batches fill to
@@ -108,7 +114,13 @@ class AvoBatcher {
             Collections.newSetFromMap(new ConcurrentHashMap<Future<AvoNetworkCallsHandler.SendResult>, Boolean>());
 
     AvoBatcher(@NotNull Sender sender, int batchSize, double batchFlushSeconds, int maxQueueSize, boolean disableBatchTimer) {
+        this(sender, batchSize, batchFlushSeconds, maxQueueSize, disableBatchTimer, false);
+    }
+
+    AvoBatcher(@NotNull Sender sender, int batchSize, double batchFlushSeconds, int maxQueueSize, boolean disableBatchTimer,
+               boolean blockWhenBacklogged) {
         this.sender = sender;
+        this.blockWhenBacklogged = blockWhenBacklogged;
         this.batchSize = batchSize;
         this.maxQueueSize = maxQueueSize;
         this.flushMillis = Math.max(1L, (long) (batchFlushSeconds * 1000.0));
@@ -319,6 +331,7 @@ class AvoBatcher {
             }
         }
 
+        List<Future<AvoNetworkCallsHandler.SendResult>> dispatched;
         try {
             if (dropped > 0) {
                 AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
@@ -327,10 +340,35 @@ class AvoBatcher {
             if (!sends.isEmpty() && afterSwap != null) {
                 afterSwap.run();
             }
-            return !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
+            dispatched = !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
         } catch (Throwable e) {
             abandon(sends, e);
             return Collections.emptyList();
+        }
+        if (blockWhenBacklogged) {
+            awaitBacklogBelowThreshold();
+        }
+        return dispatched;
+    }
+
+    // blockWhenBacklogged: waits while BACKLOG_BLOCK_EVENTS or more events wait for a send slot,
+    // at most backlogWaitMs. destroy() empties the backlog, which ends the wait; an interrupt ends
+    // it with the flag restored.
+    private void awaitBacklogBelowThreshold() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(backlogWaitMs);
+        synchronized (sendQueueLock) {
+            while (queuedEvents >= BACKLOG_BLOCK_EVENTS) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(sendQueueLock, remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
     }
 
@@ -346,6 +384,7 @@ class AvoBatcher {
                         queuedEvents -= send.eventCount;
                     }
                 }
+                sendQueueLock.notifyAll();
             }
             for (SendTask send : sends) {
                 // cancel() runs done(): the in-flight entry and the shutdown registration go.
@@ -446,6 +485,8 @@ class AvoBatcher {
         synchronized (sendQueueLock) {
             waiting.clear();
             queuedEvents = 0;
+            // Releases track calls waiting for the backlog to shrink.
+            sendQueueLock.notifyAll();
         }
         for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
             send.cancel(true);
@@ -639,6 +680,7 @@ class AvoBatcher {
                 next = waiting.pollFirst();
                 queuedEvents -= next.eventCount;
                 running++;
+                sendQueueLock.notifyAll();
             }
             try {
                 java.util.concurrent.Executor override = sendExecutorForTesting;

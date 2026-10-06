@@ -143,7 +143,7 @@ public class AvoInspector implements Inspector {
             public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
                 return handler.send(events, apiKey);
             }
-        }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer);
+        }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer, options.blockWhenBacklogged);
 
         enableLogging(resolvedEnv == AvoInspectorEnv.Dev);
     }
