@@ -10,7 +10,7 @@ New API:
 - **`trackSchemaFromEvent(eventName, properties, streamId, TrackOptions)`**, for `Map` and `JSONObject` properties, plus an overload that also takes an `AvoInspectorTarget`.
 - **`flush()`, `flush(timeoutMs)` and `destroy()`.** A negative timeout means the 10-second default. `flush` returns `true` if the instance has nothing buffered, waiting or in flight when it returns, and `false` if the timeout ran out first (`flush(0)` starts the sends and returns `true` only if nothing was pending; after `destroy()` it returns `true`). It never throws.
 - **The `Inspector` interface declares the new methods as default methods**, so your own `Inspector` implementations keep compiling. The defaults ignore the stream id and options and delegate to the 1.x methods; `flush()` and `destroy()` do nothing, and the `flush` defaults return `true`.
-- **A custom `Inspector` that declared its own `void flush()` (or `flush(long)`) no longer compiles**, because the interface now declares `boolean flush()` and `boolean flush(long)`. Change it to return `boolean`: `true` when everything was sent.
+- **A custom `Inspector` that declared its own `void flush()` (or `flush(long)`) no longer compiles**, because the interface now declares `boolean flush()` and `boolean flush(long)`. Change it to return `boolean`: `true` when nothing is left buffered, waiting or in flight. That means drained, not delivered: a send can have failed or events can have been dropped.
 - **`AvoInspectorVersion.VERSION` and `SPEC_VERSION`.** `libVersion` on the wire comes from `VERSION`.
 - **The jar declares `Automatic-Module-Name: is.avo.inspector`** for consumers on the module path.
 

@@ -309,7 +309,8 @@ is eventually sent or dropped.
 - **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
 - **A custom `Inspector` that declared its own `void flush()` (or `flush(long)`) no longer
   compiles**, because the interface now declares `boolean flush()` and `boolean flush(long)`.
-  Change it to return `boolean`: `true` when everything was sent.
+  Change it to return `boolean`: `true` when nothing is left buffered, waiting or in flight. That
+  means drained, not delivered: a send can have failed or events can have been dropped.
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
   element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
