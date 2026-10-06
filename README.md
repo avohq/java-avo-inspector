@@ -229,8 +229,9 @@ avoInspector.flush(2000);    // custom timeout in milliseconds
 `flush()` returns `true` if, when it returns, the instance has nothing buffered, waiting or in
 flight, and `false` if the timeout ran out first; the sends it did not wait for carry on in the
 background. `flush(0)` starts the sends without waiting, so it returns `true` only if nothing was
-pending. After `destroy()` it returns `true`. `flush()` never throws, and the instance stays usable
-afterwards. In serverless functions also set `disableBatchTimer(true)`.
+pending. After `destroy()` it returns `true`. `true` means drained, not delivered: a send can
+have failed or events can have been dropped, and those are reported on stderr. `flush()` never
+throws, and the instance stays usable afterwards. In serverless functions also set `disableBatchTimer(true)`.
 
 As a safety net, a JVM shutdown hook flushes every live instance, waiting up to 10 seconds in
 total. The hook runs when the JVM exits normally (for example when `main` returns or
@@ -310,7 +311,8 @@ is eventually sent or dropped.
 - **A custom `Inspector` that declared its own `void flush()` (or `flush(long)`) no longer
   compiles**, because the interface now declares `boolean flush()` and `boolean flush(long)`.
   Change it to return `boolean`: `true` when nothing is left buffered, waiting or in flight. That
-  means drained, not delivered: a send can have failed or events can have been dropped.
+  means drained, not delivered: a send can have failed or events can have been dropped (both are
+  reported on stderr).
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
   element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
