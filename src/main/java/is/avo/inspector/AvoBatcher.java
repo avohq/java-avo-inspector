@@ -234,7 +234,46 @@ class AvoBatcher {
         for (AvoBatcher batcher : batchers) {
             batcher.awaitInFlight(deadline);
         }
+        // The JVM exits after this: report what the deadline left behind, including batchers that
+        // became busy during the drain.
+        Set<AvoBatcher> all = Collections.newSetFromMap(new IdentityHashMap<AvoBatcher, Boolean>());
+        all.addAll(batchers);
+        synchronized (busyBatchers) {
+            all.addAll(busyBatchers);
+        }
+        long unsent = 0;
+        long unconfirmed = 0;
+        for (AvoBatcher batcher : all) {
+            long[] left = batcher.leftBehind();
+            unsent += left[0];
+            unconfirmed += left[1];
+        }
+        if (unsent > 0) {
+            AvoLog.dropped(unsent, AvoLog.UNSENT_AT_EXIT);
+        }
+        if (unconfirmed > 0) {
+            AvoLog.dropped(unconfirmed, AvoLog.UNCONFIRMED_AT_EXIT);
+        }
         AvoLog.flushPending(false);
+    }
+
+    // Events still buffered or waiting for a send slot, and events in sends that have started but
+    // not completed.
+    private long[] leftBehind() {
+        long unsent;
+        synchronized (lock) {
+            unsent = destroyed ? 0 : totalBuffered;
+        }
+        long unconfirmed = 0;
+        synchronized (sendQueueLock) {
+            unsent += queuedEvents;
+            for (Future<AvoNetworkCallsHandler.SendResult> send : inFlight) {
+                if (!send.isDone() && !waiting.contains(send)) {
+                    unconfirmed += ((SendTask) send).eventCount;
+                }
+            }
+        }
+        return new long[]{unsent, unconfirmed};
     }
 
     /**

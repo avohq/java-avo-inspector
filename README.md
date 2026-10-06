@@ -240,7 +240,10 @@ total. The hook runs when the JVM exits normally (for example when `main` return
 `System.exit` is called) or receives SIGTERM. It does not run on SIGKILL, `Runtime.halt()` or a
 JVM crash, and a serverless runtime may freeze or kill the process without running it, so an
 explicit `flush()` is still required. The hook only runs once the JVM is already shutting down, so
-it never keeps the process alive. An instance with buffered or in-flight events is kept reachable
+it never keeps the process alive. If the 10 seconds run out, the hook reports what it left behind
+before the JVM exits: `dropped N event(s) (unsent at exit)` for events that were never sent, and
+`dropped N event(s) (unconfirmed at exit)` for events in requests that had not completed (the
+server may or may not have received them). An instance with buffered or in-flight events is kept reachable
 until they are sent, so they are never lost to garbage collection; an idle instance can be
 garbage-collected without `destroy()`. With `disableBatchTimer(true)` and no `flush()`, an instance
 with buffered events therefore stays alive until the process exits.
@@ -266,9 +269,11 @@ about 4 × `batchSize` events per round trip to the Inspector API: with the defa
 busy wait their turn, and up to 10,000 events can wait. Beyond that the oldest waiting events are
 dropped. `maxQueueSize` bounds only the events not yet in a batch.
 
-Dropped events are always reported on stderr, whatever `enableLogging`, for example
+Dropped events are reported on stderr, whatever `enableLogging`, for example
 `Avo Inspector: dropped 8 event(s) (send backlog full) in the last 3s.` (or `queue full` when
-`maxQueueSize` is exceeded); so are non-200 responses. If you see drops:
+`maxQueueSize` is exceeded, or `unsent at exit` when the shutdown hook runs out of time); so are
+non-200 responses. Events lost to SIGKILL, `Runtime.halt()`, a JVM crash or `destroy()` are not
+reported, because no SDK code runs (or, for `destroy()`, you discarded them). If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
 - in a backfill or import script that tracks faster than that, call `flush()` every few thousand
@@ -342,9 +347,10 @@ are reported on stderr.
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
   - internal errors (`Avo Inspector: something went wrong... (<exception class>)`), with the
     exception's class name only, never its message;
-  - dropped events (`dropped N event(s) (queue full)`, `(send backlog full)` or `(internal
-    error)` for a send that could not be started or failed with an error) and non-200
-    responses (`N batch(es) rejected with HTTP <status>`);
+  - dropped events (`dropped N event(s) (queue full)`, `(send backlog full)`, `(internal
+    error)` for a send that could not be started or failed with an error, and `(unsent at exit)`
+    or `(unconfirmed at exit)` for what the shutdown hook could not send or confirm within its 10
+    seconds) and non-200 responses (`N batch(es) rejected with HTTP <status>`);
   - the warning for a stream id containing `:`, and for events tracked without an event name
     (sent as `Missing Event Name`);
   - configuration warnings: invalid env, invalid batch options, and `batchSize` larger than

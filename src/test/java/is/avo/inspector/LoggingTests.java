@@ -232,6 +232,35 @@ public class LoggingTests {
         }
     }
 
+    @Test(timeout = 10_000)
+    public void theShutdownDrainReportsWhatItCouldNotSendBeforeItsDeadline() {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AvoBatcher batcher = new AvoBatcher(new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(java.util.List<Map<String, Object>> events, String apiKey) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        }, 2, 30, 1000, true);
+        try {
+            // 15 events in batches of 2: 4 sends (8 events) run and hang, 3 sends (6) wait for a
+            // slot, 1 event is buffered; the drain adds it to the waiting sends.
+            for (int i = 0; i < 15; i++) {
+                batcher.enqueue(AvoBatcherTests.event("E" + i));
+            }
+            AvoBatcher.flushAllAtShutdown(200);
+            assertEquals(stderr(), "Avo Inspector: dropped 7 event(s) (unsent at exit) in the last 1s.\n"
+                    + "Avo Inspector: dropped 8 event(s) (unconfirmed at exit) in the last 1s.\n", stderr());
+        } finally {
+            release.countDown();
+            batcher.destroy();
+        }
+    }
+
     @Test
     public void non200IsLoggedOncePerStatusPerWindow() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
