@@ -337,18 +337,20 @@ class AvoBatcher {
     }
 
     // A completed send counts as finished even before its done() has taken it out of inFlight.
+    // Both checks run under lock: prepare() moves a batch from the buffer into inFlight under the
+    // same lock, so together they see one consistent moment.
     private boolean isDrained() {
         synchronized (lock) {
             if (!destroyed && totalBuffered > 0) {
                 return false;
             }
-        }
-        for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
-            if (!send.isDone()) {
-                return false;
+            for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
+                if (!send.isDone()) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
     }
 
     // Returns false once destroyed.
