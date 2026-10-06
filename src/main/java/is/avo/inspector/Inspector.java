@@ -101,8 +101,9 @@ public interface Inspector {
     /**
      * Sends every buffered event and waits up to 10 seconds for in-flight sends.
      *
-     * @return true if nothing is left buffered, waiting or in flight; false if the time ran out. Drained, not delivered: failed sends
-     * and dropped events are reported on stderr.
+     * @return true if nothing is left buffered, waiting or in flight when it returns; false if
+     * work is still pending or the flush failed. Drained, not delivered: failed sends and dropped
+     * events are reported on stderr.
      * The default has nothing to send and returns true.
      */
     default boolean flush() {
@@ -112,8 +113,9 @@ public interface Inspector {
     /**
      * Sends every buffered event and waits up to {@code timeoutMs} for in-flight sends.
      *
-     * @return true if nothing is left buffered, waiting or in flight; false if the timeout ran out. Drained, not delivered: failed sends
-     * and dropped events are reported on stderr.
+     * @return true if nothing is left buffered, waiting or in flight when it returns; false if
+     * work is still pending or the flush failed. Drained, not delivered: failed sends and dropped
+     * events are reported on stderr.
      * The default has nothing to send and returns true.
      */
     default boolean flush(long timeoutMs) {

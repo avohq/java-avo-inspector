@@ -378,8 +378,9 @@ public class AvoInspector implements Inspector {
      * before the process exits or a serverless handler returns, or buffered events are lost.
      *
      * @return true if this instance has nothing buffered, waiting or in flight when it returns;
-     * false if the 10 seconds ran out first. Drained, not delivered: failed sends and dropped
-     * events are reported on stderr.
+     * false if work is still pending (the 10 seconds ran out, or other threads kept tracking) or
+     * an internal error stopped the flush (logged on stderr). Drained, not delivered: failed sends
+     * and dropped events are reported on stderr.
      */
     @Override
     public boolean flush() {
@@ -392,8 +393,9 @@ public class AvoInspector implements Inspector {
      * waiting. Never throws; the instance stays usable afterwards.
      *
      * @return true if this instance has nothing buffered, waiting or in flight when it returns
-     * (always true after {@link #destroy()}); false if the timeout ran out first. Drained, not
-     * delivered: failed sends and dropped events are reported on stderr.
+     * (always true after {@link #destroy()}); false if work is still pending (the timeout ran out,
+     * or other threads kept tracking) or an internal error stopped the flush (logged on stderr).
+     * Drained, not delivered: failed sends and dropped events are reported on stderr.
      */
     @Override
     public boolean flush(long timeoutMs) {

@@ -227,11 +227,13 @@ avoInspector.flush(2000);    // custom timeout in milliseconds
 ```
 
 `flush()` returns `true` if, when it returns, the instance has nothing buffered, waiting or in
-flight, and `false` if the timeout ran out first; the sends it did not wait for carry on in the
-background. `flush(0)` starts the sends without waiting, so it returns `true` only if nothing was
-pending. After `destroy()` it returns `true`. `true` means drained, not delivered: a send can
-have failed or events can have been dropped, and those are reported on stderr. `flush()` never
-throws, and the instance stays usable afterwards. In serverless functions also set `disableBatchTimer(true)`.
+flight. It returns `false` if work is still pending, usually because the timeout ran out but also
+when other threads keep tracking, or if an internal error stopped the flush (logged on stderr); the
+sends it did not wait for carry on in the background. `flush(0)` starts the sends without waiting,
+so it returns `true` only if nothing was pending. After `destroy()` it returns `true`. `true` means
+drained, not delivered: a send can have failed or events can have been dropped, and those are
+reported on stderr. `flush()` never throws, and the instance stays usable afterwards. In
+serverless functions also set `disableBatchTimer(true)`.
 
 As a safety net, a JVM shutdown hook flushes every live instance, waiting up to 10 seconds in
 total. The hook runs when the JVM exits normally (for example when `main` returns or
@@ -280,7 +282,7 @@ for (int i = 0; i < rows.size(); i++) {
     }
 }
 while (!avoInspector.flush()) {
-    // keep waiting until every batch has been sent
+    // keep waiting until nothing is buffered, waiting or in flight
 }
 ```
 
