@@ -98,12 +98,24 @@ public interface Inspector {
         return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
     }
 
-    /** Sends every buffered event and waits up to 10 seconds for in-flight sends. */
-    default void flush() {
+    /**
+     * Sends every buffered event and waits up to 10 seconds for in-flight sends.
+     *
+     * @return true if nothing is left buffered, waiting or in flight; false if the time ran out.
+     * The default has nothing to send and returns true.
+     */
+    default boolean flush() {
+        return true;
     }
 
-    /** Sends every buffered event and waits up to {@code timeoutMs} for in-flight sends. */
-    default void flush(long timeoutMs) {
+    /**
+     * Sends every buffered event and waits up to {@code timeoutMs} for in-flight sends.
+     *
+     * @return true if nothing is left buffered, waiting or in flight; false if the timeout ran out.
+     * The default has nothing to send and returns true.
+     */
+    default boolean flush(long timeoutMs) {
+        return true;
     }
 
     /** Terminates the instance, discarding buffered events. */

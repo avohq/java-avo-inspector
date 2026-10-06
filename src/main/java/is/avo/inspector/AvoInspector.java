@@ -376,27 +376,35 @@ public class AvoInspector implements Inspector {
     /**
      * Sends every buffered event and waits up to 10 seconds for all in-flight sends. Call it
      * before the process exits or a serverless handler returns, or buffered events are lost.
+     *
+     * @return true if this instance has nothing buffered, waiting or in flight when it returns;
+     * false if the 10 seconds ran out first
      */
     @Override
-    public void flush() {
-        flush(DEFAULT_FLUSH_TIMEOUT_MS);
+    public boolean flush() {
+        return flush(DEFAULT_FLUSH_TIMEOUT_MS);
     }
 
     /**
      * Sends every buffered event and waits up to {@code timeoutMs} for all in-flight sends to
-     * complete. A negative timeout means the 10 second default. Never throws; the instance stays
-     * usable afterwards.
+     * complete. A negative timeout means the 10 second default; {@code 0} starts the sends without
+     * waiting. Never throws; the instance stays usable afterwards.
+     *
+     * @return true if this instance has nothing buffered, waiting or in flight when it returns
+     * (always true after {@link #destroy()}); false if the timeout ran out first
      */
     @Override
-    public void flush(long timeoutMs) {
+    public boolean flush(long timeoutMs) {
+        boolean drained = false;
         try {
-            batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
+            drained = batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
         } catch (Throwable e) {
             Util.restoreInterrupt(e);
             Util.logInternalError(e);
         }
         // Report what the log limiter held back in windows that have expired (the cross-SDK rule).
         AvoLog.flushPending(true);
+        return drained;
     }
 
     /**

@@ -171,7 +171,7 @@ and gateway options, use `trackSchemaFromEvent(eventName, properties, target, st
 All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
 methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
 If your implementation wraps an `AvoInspector`, forward `flush()`, `flush(long)` and `destroy()` to
-it: the defaults do nothing. Forward the stream id and `TrackOptions` overloads too; their defaults
+it: the defaults do nothing (the `flush` defaults return `true`). Forward the stream id and `TrackOptions` overloads too; their defaults
 call the 1.x methods and drop the stream id and options.
 
 ### 2.
@@ -226,8 +226,11 @@ avoInspector.flush();        // sends the buffer, waits up to 10 seconds for in-
 avoInspector.flush(2000);    // custom timeout in milliseconds
 ```
 
-`flush()` never throws, and the instance stays usable afterwards. In serverless functions also
-set `disableBatchTimer(true)`.
+`flush()` returns `true` if, when it returns, the instance has nothing buffered, waiting or in
+flight, and `false` if the timeout ran out first; the sends it did not wait for carry on in the
+background. `flush(0)` starts the sends without waiting, so it returns `true` only if nothing was
+pending. After `destroy()` it returns `true`. `flush()` never throws, and the instance stays usable
+afterwards. In serverless functions also set `disableBatchTimer(true)`.
 
 As a safety net, a JVM shutdown hook flushes every live instance, waiting up to 10 seconds in
 total. The hook runs when the JVM exits normally (for example when `main` returns or
@@ -275,8 +278,15 @@ for (int i = 0; i < rows.size(); i++) {
         avoInspector.flush();
     }
 }
-avoInspector.flush();
+while (!avoInspector.flush()) {
+    // keep waiting until every batch has been sent
+}
 ```
+
+A single `flush()` waits at most 10 seconds, and up to 10,000 events can be waiting behind the 4
+requests, so the last `flush()` may return `false` with batches still to send. Calling it again
+until it returns `true` always ends: each request gives up after 10 seconds, so every waiting batch
+is eventually sent or dropped.
 
 # Upgrading from 1.x to 2.0
 

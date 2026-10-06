@@ -324,12 +324,31 @@ class AvoBatcher {
         }
     }
 
-    /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
-    void flush(long timeoutMs) {
+    /**
+     * Sends everything buffered, then waits for every in-flight send or the timeout. Returns whether
+     * nothing is left buffered, waiting or in flight. Never throws.
+     */
+    boolean flush(long timeoutMs) {
         if (!sendBuffered()) {
-            return;
+            return true;
         }
         awaitInFlight(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs)));
+        return isDrained();
+    }
+
+    // A completed send counts as finished even before its done() has taken it out of inFlight.
+    private boolean isDrained() {
+        synchronized (lock) {
+            if (!destroyed && totalBuffered > 0) {
+                return false;
+            }
+        }
+        for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
+            if (!send.isDone()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Returns false once destroyed.

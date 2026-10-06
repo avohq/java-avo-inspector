@@ -14,6 +14,7 @@ import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 // The Inspector interface grew default methods: implementations written against 1.x still compile.
 public class InspectorInterfaceTests {
@@ -79,8 +80,9 @@ public class InspectorInterfaceTests {
         inspector.trackSchemaFromEvent("B", new JSONObject(), "stream", options);
         inspector.trackSchemaFromEvent("C", Collections.<String, Object>emptyMap(), target, "stream", options);
         inspector.trackSchemaFromEvent("D", new JSONObject(), target, "stream", options);
-        inspector.flush();
-        inspector.flush(100);
+        // Nothing of its own to send: the defaults report it drained.
+        assertTrue(inspector.flush());
+        assertTrue(inspector.flush(100));
         inspector.destroy();
 
         assertEquals(java.util.Arrays.asList("map:A", "json:B", "map+target:C", "json+target:D"), oneX.calls);
