@@ -161,7 +161,14 @@ class AvoNetworkCallsHandler {
                 return SendResult.NON_200;
             }
 
-            updateSamplingRate(readFully(connection.getInputStream()));
+            // A 200 means the batch was delivered. A body that cannot be read or parsed, for any
+            // reason (even an Error, e.g. a class missing after an undeploy closed the class
+            // loader), only leaves the sampling rate as it was.
+            try {
+                updateSamplingRate(readFully(connection.getInputStream()));
+            } catch (Throwable e) {
+                Util.restoreInterrupt(e);
+            }
             return SendResult.OK;
         } catch (SocketTimeoutException e) {
             return failed("Request timed out");

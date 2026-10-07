@@ -883,6 +883,7 @@ class AvoBatcher {
                 AvoNetworkCallsHandler.class, AvoNetworkCallsHandler.SendResult.class, AvoNetworkCallsHandler.Disconnect.class,
                 Util.class, AvoInspector.class,
                 org.json.JSONObject.class, org.json.JSONArray.class, org.json.JSONString.class, org.json.JSONException.class,
+                org.json.JSONTokener.class,
         };
         for (Class<?> type : used) {
             try {
@@ -890,6 +891,22 @@ class AvoBatcher {
             } catch (Throwable ignored) {
                 // Best effort.
             }
+        }
+        // org.json loads more classes as its code runs (the parser, JSONObject.NULL, number and
+        // string writers), so run what a send does once: serialise an event and parse a response.
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("string", "a\"\u00e9\n");
+            event.put("number", 0.5);
+            event.put("integer", 1);
+            event.put("boolean", true);
+            event.put("null", org.json.JSONObject.NULL);
+            event.put("array", new org.json.JSONArray().put(1).put(new org.json.JSONObject().put("key", "value")));
+            String body = new org.json.JSONArray().put(new org.json.JSONObject(event)).toString();
+            new org.json.JSONArray(body);
+            new org.json.JSONObject("{\"samplingRate\":1.0,\"other\":[null,true,-1e3,\"x\"]}").opt("samplingRate");
+        } catch (Throwable ignored) {
+            // Best effort.
         }
     }
 }

@@ -279,6 +279,34 @@ public class NetworkTests {
         }
     }
 
+    @Test(timeout = 10_000)
+    public void aTwoHundredWhoseBodyCannotBeParsedStillCountsAsDelivered() throws Exception {
+        AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("staging") {
+            @Override
+            void updateSamplingRate(String responseBody) {
+                // As after an undeploy closed the class loader before org.json's parser was loaded.
+                throw new NoClassDefFoundError("org/json/JSONTokener");
+            }
+        };
+        handler.endpointForTesting = server.url();
+        handler.samplingRate = 0.5;
+
+        AvoLog.resetForTesting();
+        java.io.PrintStream originalErr = System.err;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, "UTF-8"));
+        AvoNetworkCallsHandler.SendResult result;
+        try {
+            result = handler.send(eventWithPadding(1), "test-key");
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertEquals(AvoNetworkCallsHandler.SendResult.OK, result);
+        assertEquals(0.5, handler.samplingRate, 0.0);
+        assertEquals("", captured.toString("UTF-8"));
+        assertEquals(1, server.requests().size());
+    }
+
     @Test(timeout = 20_000)
     public void unansweredRequestTimesOutAfterTenSeconds() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) {
