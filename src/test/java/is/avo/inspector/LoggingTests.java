@@ -261,6 +261,95 @@ public class LoggingTests {
         }
     }
 
+    // A sender that holds every send until released, then optionally reports it failed.
+    private static AvoBatcher.Sender heldSender(final java.util.concurrent.CountDownLatch release,
+                                                final java.util.concurrent.atomic.AtomicInteger calls, final boolean fail) {
+        return new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(java.util.List<Map<String, Object>> events, String apiKey) {
+                calls.incrementAndGet();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (fail) {
+                    AvoLog.failed("Request timed out");
+                    return AvoNetworkCallsHandler.SendResult.FAILED;
+                }
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        };
+    }
+
+    @Test(timeout = 10_000)
+    public void sendsQueuedBehindAFullPoolAreUnsentAtExitAndNeverStart() throws Exception {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        // A pool with one thread: of the 4 sends this instance may run, 1 starts and 3 queue.
+        java.util.concurrent.ExecutorService onePool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        AvoBatcher.sendExecutorForTesting = onePool;
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, false), 2, 30, 1000, true);
+        try {
+            // 11 events in batches of 2: 1 send (2 events) runs, 3 sends (6) are queued in the pool,
+            // 1 send (2) waits for a slot and 1 event is buffered (the drain adds it as a send).
+            for (int i = 0; i < 11; i++) {
+                batcher.enqueue(AvoBatcherTests.event("E" + i));
+            }
+            AvoBatcher.flushAllAtShutdown(200);
+            assertEquals(stderr(), "Avo Inspector: dropped 9 event(s) (unsent at exit) in the last 1s.\n"
+                    + "Avo Inspector: dropped 2 event(s) (unconfirmed at exit) in the last 1s.\n", stderr());
+
+            // What was counted unsent is never sent afterwards.
+            release.countDown();
+            onePool.shutdown();
+            assertTrue(onePool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1, calls.get());
+        } finally {
+            AvoBatcher.sendExecutorForTesting = null;
+            release.countDown();
+            onePool.shutdownNow();
+            batcher.destroy();
+        }
+    }
+
+    @Test(timeout = 10_000)
+    public void aSendCountedUnconfirmedAtExitDoesNotAlsoReportItsFailure() throws Exception {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, true), 2, 30, 1000, true);
+        try {
+            batcher.enqueue(AvoBatcherTests.event("E1"));
+            batcher.enqueue(AvoBatcherTests.event("E2"));
+            AvoBatcher.flushAllAtShutdown(200);
+            String atExit = "Avo Inspector: dropped 2 event(s) (unconfirmed at exit) in the last 1s.\n";
+            assertEquals(stderr(), atExit, stderr());
+
+            // The send then times out: it was already counted, so its failure is not reported too.
+            release.countDown();
+            assertTrue(batcher.flush(5_000));
+            assertEquals(stderr(), atExit, stderr());
+        } finally {
+            release.countDown();
+            batcher.destroy();
+        }
+    }
+
+    @Test(timeout = 10_000)
+    public void aSendThatFailedBeforeTheDeadlineIsNotCountedAtExit() {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(0);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, true), 2, 30, 1000, true);
+        try {
+            batcher.enqueue(AvoBatcherTests.event("E1"));
+            batcher.enqueue(AvoBatcherTests.event("E2"));
+            AvoBatcher.flushAllAtShutdown(5_000);
+            assertEquals(stderr(), "Avo Inspector: schema sending failed: Request timed out.\n", stderr());
+        } finally {
+            batcher.destroy();
+        }
+    }
+
     @Test
     public void non200IsLoggedOncePerStatusPerWindow() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);

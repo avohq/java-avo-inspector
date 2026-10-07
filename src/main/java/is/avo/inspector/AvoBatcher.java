@@ -255,10 +255,15 @@ class AvoBatcher {
         }
         long unsent = 0;
         long unconfirmed = 0;
+        List<SendTask> givenUp = new ArrayList<>();
         for (AvoBatcher batcher : all) {
-            long[] left = batcher.leftBehind();
+            long[] left = batcher.leftBehind(givenUp);
             unsent += left[0];
             unconfirmed += left[1];
+        }
+        // Counted as unsent: they must not start afterwards.
+        for (SendTask send : givenUp) {
+            send.cancel(false);
         }
         if (unsent > 0) {
             AvoLog.dropped(unsent, AvoLog.UNSENT_AT_EXIT);
@@ -269,23 +274,45 @@ class AvoBatcher {
         AvoLog.flushPending(false);
     }
 
-    // Events still buffered or waiting for a send slot, and events in sends that have started but
-    // not completed.
-    private long[] leftBehind() {
+    // Claims every unfinished send for the exit report, so each event is reported once: events
+    // still buffered, or in sends not yet started (waiting for a slot or queued in the pool), are
+    // unsent, and those sends are added to givenUp; events in started sends whose outcome has not
+    // been reported are unconfirmed. A send that has reported its outcome (logged a failure or
+    // rejection, or completed) is not counted.
+    private long[] leftBehind(List<SendTask> givenUp) {
         long unsent;
         synchronized (lock) {
             unsent = destroyed ? 0 : totalBuffered;
         }
         long unconfirmed = 0;
         synchronized (sendQueueLock) {
-            unsent += queuedEvents;
-            for (Future<AvoNetworkCallsHandler.SendResult> send : inFlight) {
-                if (!send.isDone() && !waiting.contains(send)) {
-                    unconfirmed += ((SendTask) send).eventCount;
+            for (Future<AvoNetworkCallsHandler.SendResult> future : new ArrayList<>(inFlight)) {
+                SendTask send = (SendTask) future;
+                if (send.isDone()) {
+                    continue;
+                }
+                if (send.state.compareAndSet(SendTask.QUEUED, SendTask.COUNTED_AT_EXIT)) {
+                    unsent += send.eventCount;
+                    givenUp.add(send);
+                } else if (send.state.compareAndSet(SendTask.STARTED, SendTask.COUNTED_AT_EXIT)) {
+                    unconfirmed += send.eventCount;
                 }
             }
         }
         return new long[]{unsent, unconfirmed};
+    }
+
+    // The send this thread is running, if any.
+    private static final ThreadLocal<SendTask> currentSend = new ThreadLocal<>();
+
+    /**
+     * Claims the outcome of the send this thread is running before it is logged, and once it
+     * completes: false if the exit report has already counted the send as unconfirmed, so its
+     * outcome must not be reported too. Always true outside a send.
+     */
+    static boolean claimCurrentSend() {
+        SendTask send = currentSend.get();
+        return send == null || send.claimOutcome();
     }
 
     /**
@@ -707,7 +734,15 @@ class AvoBatcher {
         @Override
         public void run() {
             try {
-                send.run();
+                // Not started if the exit report already counted it as unsent.
+                if (send.state.compareAndSet(SendTask.QUEUED, SendTask.STARTED)) {
+                    currentSend.set(send);
+                    try {
+                        send.run();
+                    } finally {
+                        currentSend.remove();
+                    }
+                }
             } finally {
                 synchronized (sendQueueLock) {
                     running--;
@@ -734,7 +769,9 @@ class AvoBatcher {
         @Override
         public AvoNetworkCallsHandler.SendResult call() {
             try {
-                return sender.send(events, apiKey);
+                AvoNetworkCallsHandler.SendResult result = sender.send(events, apiKey);
+                claimCurrentSend();
+                return result;
             } catch (Throwable e) {
                 Util.restoreInterrupt(e);
                 AvoLog.dropped(events.size(), AvoLog.INTERNAL_ERROR);
@@ -745,14 +782,26 @@ class AvoBatcher {
     }
 
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
+        static final int QUEUED = 0;
+        static final int STARTED = 1;
+        static final int OUTCOME_CLAIMED = 2;
+        static final int COUNTED_AT_EXIT = 3;
+
         // Guarded by sendQueueLock while the send waits; fixed once it starts.
         private final List<Map<String, Object>> events;
         int eventCount;
+        // QUEUED until a send thread starts it; then either the send claims its outcome or the
+        // exit report counts it, whichever comes first.
+        final AtomicInteger state = new AtomicInteger(QUEUED);
 
         SendTask(String apiKey, List<Map<String, Object>> events) {
             super(new SendCall(apiKey, events));
             this.events = events;
             this.eventCount = events.size();
+        }
+
+        boolean claimOutcome() {
+            return state.compareAndSet(STARTED, OUTCOME_CLAIMED) || state.get() == OUTCOME_CLAIMED;
         }
 
         // Caller holds sendQueueLock and the send has not started. Returns how many were dropped.

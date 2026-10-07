@@ -110,6 +110,10 @@ final class AvoLog {
     // first one after the window prints itself together with what the previous window counted,
     // over the time since that window's first occurrence.
     private static void report(String key, long amount, Line line) {
+        // A send the exit report already counted as unconfirmed reports nothing more.
+        if (!AvoBatcher.claimCurrentSend()) {
+            return;
+        }
         String print;
         long now = now();
         synchronized (windows) {
