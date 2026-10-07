@@ -281,10 +281,11 @@ reported, because no SDK code runs (or, for `destroy()`, you discarded them). If
 
 - raise `batchSize` (for example to 100), so each request carries more events;
 - in a backfill, import or other batch job, set `blockWhenBacklogged(true)`: a track call that
-  leaves 1,000 or more events waiting for a send slot then waits until fewer are waiting, so the
-  loop slows down to the rate the API accepts instead of dropping events. Each wait lasts at most
-  10 seconds (the request timeout), so a slow or unresponsive API slows the loop but never stops
-  it, and the backlog can still overflow then; an interrupt or `destroy()` ends the wait. Don't set
+  leaves 1,000 or more events waiting for a send slot then waits until fewer are waiting, which
+  paces the loop and slows the growth of the backlog. It does not guarantee delivery: each wait
+  lasts at most 10 seconds (the request timeout), so while the API is slow or down for longer the
+  loop keeps going, the backlog can pass 10,000 events, and the oldest are then dropped (and
+  logged). An interrupt or `destroy()` ends the wait. Don't set
   it for request threads in a server: they would then wait whenever the Inspector API is slow.
 
 ```java

@@ -133,8 +133,10 @@ public final class AvoInspectorOptions {
 
         /**
          * When true, a track call that leaves 1,000 or more events waiting for a send slot waits
-         * until fewer are waiting, for at most 10 seconds per call, instead of letting the backlog
-         * grow until the oldest events are dropped. An interrupt or {@code destroy()} ends the wait.
+         * until fewer are waiting, for at most 10 seconds per call. This paces the caller and slows
+         * the growth of the backlog but does not guarantee delivery: while the API is slow or down
+         * for longer, the backlog can still pass 10,000 events and the oldest are then dropped (and
+         * logged). An interrupt or {@code destroy()} ends the wait.
          * Recommended for backfill and batch jobs that track in a tight loop; not for request
          * threads, which would then wait whenever the Inspector API is slow. Default false.
          */
