@@ -32,12 +32,26 @@ public class AvoSchemaExtractor {
 	// cycles could otherwise expand exponentially; past the budget a complex value is reported as
 	// "object", like the depth cap.
 	static final int MAX_EXPANSIONS = 10_000;
+	// Property entries emitted per extractSchema call, at every depth and in iteration order (the
+	// cross-SDK extraction bound): a map with a million keys would otherwise produce a body of tens
+	// of megabytes. Entries past it are omitted. Independent of MAX_EXPANSIONS.
+	static final int MAX_PROPERTIES = 10_000;
 
 	// The state of one extractSchema call: the containers on the path to the current value (by
-	// identity) and the complex values expanded so far.
+	// identity), the complex values expanded so far and the property entries emitted so far.
 	private static final class Walk {
 		final Set<Object> ancestors = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
 		int expansions;
+		int properties;
+
+		// Counts one property entry; false once the budget is spent, so the entry is omitted.
+		boolean takeProperty() {
+			if (properties >= MAX_PROPERTIES) {
+				return false;
+			}
+			properties++;
+			return true;
+		}
 
 		Walk(Object root) {
 			ancestors.add(root);
@@ -78,6 +92,9 @@ public class AvoSchemaExtractor {
 
 		Walk walk = new Walk(eventProperties);
 		for (Field eventPropertyField: eventPropertiesFields) {
+			if (!walk.takeProperty()) {
+				break;
+			}
 			AvoEventSchemaType propertyType = getAvoSchemaType(eventProperties, eventPropertyField, walk);
 			result.put(eventPropertyField.getName(), propertyType);
 		}
@@ -92,18 +109,22 @@ public class AvoSchemaExtractor {
 		}
 	}
 
-	// The object branch of mapping(): one entry per own property, in iteration order.
+	// The object branch of mapping(): one entry per own property, in iteration order. Each entry is
+	// counted before its value is mapped, so a parent precedes its children in the budget.
 	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth, Walk walk) {
 		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
 
 		if (object instanceof JSONObject) {
 			JSONObject json = (JSONObject) object;
-			for (Iterator<String> it = json.keys(); it.hasNext(); ) {
+			for (Iterator<String> it = json.keys(); it.hasNext() && walk.takeProperty(); ) {
 				String key = it.next();
 				result.put(key, objectToAvoType(json.opt(key), depth, walk));
 			}
 		} else {
 			for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
+				if (!walk.takeProperty()) {
+					break;
+				}
 				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth, walk));
 			}
 		}

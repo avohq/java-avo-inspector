@@ -204,8 +204,11 @@ Map<String, AvoEventSchemaType> schema = avoInspector.extractSchema(new HashMap<
 Extraction stops expanding a map, list, array or `JSONObject` that is nested more than 10 levels
 deep, that contains itself, or that comes after the first 10,000 such values in one event (a value
 shared by many properties counts each time it appears). Such a value is reported as `"object"` with
-no children, or as the type `"object"` inside a list. Very large or cyclic payloads therefore take
-bounded time and memory.
+no children, or as the type `"object"` inside a list. At most 10,000 properties are reported per
+event, counted at every depth (a nested property counts as well as the one that contains it) in the
+map's iteration order; properties past that are left out, without a log line. Very large or cyclic
+payloads therefore take bounded time and memory: a map with a million keys yields its first 10,000
+properties.
 
 # Batching, flush and shutdown
 
