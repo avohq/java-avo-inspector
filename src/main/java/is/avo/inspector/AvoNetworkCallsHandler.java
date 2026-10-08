@@ -163,9 +163,14 @@ class AvoNetworkCallsHandler {
 
             // A 200 means the batch was delivered. A body that cannot be read or parsed, for any
             // reason (even an Error, e.g. a class missing after an undeploy closed the class
-            // loader), only leaves the sampling rate as it was.
+            // loader), only leaves the sampling rate as it was. So does a body cut off before its
+            // Content-Length, which the stream ends without an error.
             try {
-                updateSamplingRate(readFully(connection.getInputStream()));
+                byte[] responseBody = readFully(connection.getInputStream());
+                long declared = connection.getContentLengthLong();
+                if (declared < 0 || declared == responseBody.length) {
+                    updateSamplingRate(new String(responseBody, StandardCharsets.UTF_8));
+                }
             } catch (Throwable e) {
                 Util.restoreInterrupt(e);
             }
@@ -258,9 +263,9 @@ class AvoNetworkCallsHandler {
         }
     }
 
-    private static String readFully(@Nullable InputStream stream) throws IOException {
+    private static byte[] readFully(@Nullable InputStream stream) throws IOException {
         if (stream == null) {
-            return "";
+            return new byte[0];
         }
         try (InputStream in = stream) {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
@@ -269,7 +274,7 @@ class AvoNetworkCallsHandler {
             while ((read = in.read(buffer)) != -1) {
                 bytes.write(buffer, 0, read);
             }
-            return new String(bytes.toByteArray(), StandardCharsets.UTF_8);
+            return bytes.toByteArray();
         }
     }
 

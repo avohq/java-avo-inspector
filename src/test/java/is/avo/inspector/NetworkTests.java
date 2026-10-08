@@ -307,6 +307,48 @@ public class NetworkTests {
         assertEquals(1, server.requests().size());
     }
 
+    @Test(timeout = 10_000)
+    public void aTwoHundredCutOffMidBodyStillCountsAsDeliveredAndKeepsTheRate() throws Exception {
+        // The status decides. The part that arrives is itself a valid body, so reading it as one
+        // would change the rate.
+        final String partial = "{\"samplingRate\":0.1}";
+        try (final ServerSocket socket = new ServerSocket(0)) {
+            final java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread responder = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try (Socket client = socket.accept()) {
+                        java.io.InputStream in = client.getInputStream();
+                        StringBuilder head = new StringBuilder();
+                        while (!head.toString().endsWith("\r\n\r\n")) {
+                            head.append((char) in.read());
+                        }
+                        java.util.regex.Matcher length = java.util.regex.Pattern
+                                .compile("(?i)content-length: *(\\d+)").matcher(head);
+                        length.find();
+                        for (int remaining = Integer.parseInt(length.group(1)); remaining > 0; remaining--) {
+                            in.read();
+                        }
+                        client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                + "Content-Length: 100\r\n\r\n" + partial).getBytes(StandardCharsets.UTF_8));
+                        client.getOutputStream().flush();
+                        answered.set(true);
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+            responder.start();
+
+            AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("staging");
+            handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
+            handler.samplingRate = 0.5;
+            assertEquals(AvoNetworkCallsHandler.SendResult.OK, handler.send(eventWithPadding(1), "test-key"));
+            assertEquals(0.5, handler.samplingRate, 0.0);
+            responder.join();
+            assertTrue(answered.get());
+        }
+    }
+
     @Test(timeout = 20_000)
     public void unansweredRequestTimesOutAfterTenSeconds() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) {
