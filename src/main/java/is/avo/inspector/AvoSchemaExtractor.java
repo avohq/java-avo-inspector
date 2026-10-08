@@ -222,8 +222,9 @@ public class AvoSchemaExtractor {
 	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Walk walk) {
 		Class<?> component = list.getClass().getComponentType();
 		if (component != null && component.isPrimitive()) {
-			// Every element has the component's type, so there is nothing to walk or box.
-			if (Array.getLength(list) == 0) {
+			// Every element has the component's type, so there is nothing to walk or box. A numeric
+			// array is typed by its component even when empty; an empty boolean[] or char[] is not.
+			if (Array.getLength(list) == 0 && (component == boolean.class || component == char.class)) {
 				return new AvoEventSchemaType.AvoList("string", new ArrayList<AvoEventSchemaType>());
 			}
 			AvoEventSchemaType type = primitiveType(component);

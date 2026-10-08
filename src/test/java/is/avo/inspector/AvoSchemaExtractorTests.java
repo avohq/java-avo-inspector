@@ -124,6 +124,24 @@ public class AvoSchemaExtractorTests {
     }
 
     @Test
+    public void emptyNumericArraysAreTypedByTheirComponent() {
+        // An empty boolean[] or char[] stays an empty list(string).
+        assertWire("[{propertyName:d,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:f,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:b,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:s,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:i,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:l,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:z,propertyType:'list(string)',children:[]},"
+                        + "{propertyName:c,propertyType:'list(string)',children:[]},"
+                        + "{propertyName:zz,propertyType:'list(boolean)',children:[boolean]},"
+                        + "{propertyName:cc,propertyType:'list(string)',children:[string]}]",
+                props("d", new double[0], "f", new float[0], "b", new byte[0], "s", new short[0],
+                        "i", new int[0], "l", new long[0], "z", new boolean[0], "c", new char[0],
+                        "zz", new boolean[]{true}, "cc", new char[]{'a'}));
+    }
+
+    @Test
     public void jsonObjectInput() {
         JSONObject input = new JSONObject();
         input.put("list", new JSONArray().put(1).put(2));
