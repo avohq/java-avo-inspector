@@ -27,7 +27,7 @@ public class AvoInspector implements Inspector {
 
     static final String NO_API_KEY_MESSAGE = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
     static final String API_KEY_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
-    static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "Avo Inspector: apiKey must not contain control characters";
+    static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] apiKey must not contain control characters";
     static final String NO_VERSION_MESSAGE = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
 
     // Sent as the event name of an event tracked with a null, empty or whitespace-only name.
