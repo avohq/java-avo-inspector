@@ -45,7 +45,7 @@ public class BackpressureTests {
     }
 
     private static void track(AvoInspector inspector, int i) {
-        inspector.trackSchemaFromEvent("E", Collections.<String, Object>singletonMap("i", i));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(Collections.<String, Object>singletonMap("i", i)).build());
     }
 
     private int eventsReceived() {

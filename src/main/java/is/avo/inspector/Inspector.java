@@ -3,56 +3,27 @@ package is.avo.inspector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import org.json.JSONObject;
-
 import java.util.Map;
 
 /**
  * The Avo Inspector API; {@link AvoInspector} is the implementation.
  *
- * <p>The methods added in 2.0 are default methods, so implementations written for 1.x keep
- * compiling. A custom implementation that wraps an {@link AvoInspector} must override and forward
- * {@link #flush()}, {@link #flush(long)} and {@link #destroy()}: their defaults do nothing, so a
- * wrapper that does not forward them never sends buffered events on flush and never stops the
- * instance it wraps. It should also forward the stream id and {@link GatewayOptions} overloads,
- * whose defaults call the 1.x methods and drop the stream id and options.
+ * <p>In 2.0 the track call takes one {@link InspectorEvent}, and the interface has no default
+ * methods: an implementation written for 1.x must implement
+ * {@link #trackSchemaFromEvent(InspectorEvent)}, {@link #flush()}, {@link #flush(long)} and
+ * {@link #destroy()}. A wrapper around an {@link AvoInspector} should forward all of them, or the
+ * wrapped instance never sends what it buffered.
  */
 @SuppressWarnings("UnusedReturnValue")
 public interface Inspector {
 
     /**
-     * Extracts the schema of an event's properties and queues it for the Inspector backend.
+     * Extracts the schema of the event's properties and queues the event for the Inspector backend.
      *
      * @return the extracted schema, as soon as the event is queued; never waits for the network
      */
     @NotNull
-    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties);
-
-    /**
-     * Extracts the schema of an event's properties and queues it for another Avo source.
-     *
-     * @return the extracted schema, as soon as the event is queued; never waits for the network
-     */
-    @NotNull
-    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
-
-    /**
-     * Extracts the schema of an event's properties and queues it for the Inspector backend.
-     * Property order follows the map's iteration order.
-     *
-     * @return the extracted schema, as soon as the event is queued; never waits for the network
-     */
-    @NotNull
-    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties);
-
-    /**
-     * Extracts the schema of an event's properties and queues it for another Avo source.
-     * Property order follows the map's iteration order.
-     *
-     * @return the extracted schema, as soon as the event is queued; never waits for the network
-     */
-    @NotNull
-    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget);
+    Map<String, AvoEventSchemaType> trackSchemaFromEvent(@Nullable InspectorEvent event);
 
     /** Queues an event schema you extracted yourself, e.g. with {@link #extractSchema(Object)}. */
     void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema);
@@ -64,78 +35,14 @@ public interface Inspector {
     @NotNull
     Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties);
 
-    // The methods below were added in 2.0 as defaults, so implementations written against 1.x keep
-    // compiling. The stream-id-only overloads pass null options to the GatewayOptions overloads;
-    // the others ignore streamId and options and delegate to the 1.x methods. AvoInspector
-    // implements the GatewayOptions overloads fully.
-
-    /**
-     * Tracks an event with a stream id and no gateway options: the same as passing {@code null}
-     * options to {@link #trackSchemaFromEvent(String, JSONObject, String, GatewayOptions)}.
-     *
-     * <p>A bare {@code null} third argument is ambiguous with the {@link AvoInspectorTarget}
-     * overload and does not compile; pass {@code (String) null}, or {@code ""}, for no stream id.
-     */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
-                                                               @Nullable String streamId) {
-        return trackSchemaFromEvent(eventName, eventProperties, streamId, (GatewayOptions) null);
-    }
-
-    /**
-     * Tracks an event with a stream id and no gateway options: the same as passing {@code null}
-     * options to {@link #trackSchemaFromEvent(String, Map, String, GatewayOptions)}.
-     *
-     * <p>A bare {@code null} third argument is ambiguous with the {@link AvoInspectorTarget}
-     * overload and does not compile; pass {@code (String) null}, or {@code ""}, for no stream id.
-     */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
-                                                               @Nullable String streamId) {
-        return trackSchemaFromEvent(eventName, eventProperties, streamId, (GatewayOptions) null);
-    }
-
-    /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
-                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
-        return trackSchemaFromEvent(eventName, eventProperties);
-    }
-
-    /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
-                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
-        return trackSchemaFromEvent(eventName, eventProperties);
-    }
-
-    /** Tracks an event for another Avo source, with a stream id and gateway options. */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
-                                                               @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
-                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
-        return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
-    }
-
-    /** Tracks an event for another Avo source, with a stream id and gateway options. */
-    @NotNull
-    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
-                                                               @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
-                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
-        return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
-    }
-
     /**
      * Sends every buffered event and waits up to 10 seconds for in-flight sends.
      *
      * @return true if nothing is left buffered, waiting or in flight when it returns; false if
      * work is still pending or the flush failed. Drained, not delivered: failed sends and dropped
      * events are reported on stderr.
-     * The default has nothing to send and returns true.
      */
-    default boolean flush() {
-        return true;
-    }
+    boolean flush();
 
     /**
      * Sends every buffered event and waits up to {@code timeoutMs} for in-flight sends.
@@ -143,13 +50,9 @@ public interface Inspector {
      * @return true if nothing is left buffered, waiting or in flight when it returns; false if
      * work is still pending or the flush failed. Drained, not delivered: failed sends and dropped
      * events are reported on stderr.
-     * The default has nothing to send and returns true.
      */
-    default boolean flush(long timeoutMs) {
-        return true;
-    }
+    boolean flush(long timeoutMs);
 
     /** Terminates the instance, discarding buffered events. */
-    default void destroy() {
-    }
+    void destroy();
 }

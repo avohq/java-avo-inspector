@@ -191,6 +191,7 @@ public class HarnessTests {
                 {"{\"action\":\"trackN\",\"count\":1,\"eventNamePrefix\":7}", "trackN eventNamePrefix must be a string"},
                 {"{\"action\":\"trackN\",\"count\":1,\"streamId\":7}", "trackN streamId must be a string"},
                 {"{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{},\"options\":\"x\"}", "options must be an object"},
+                {"{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":[1]}", "eventProperties must be an object"},
         };
         for (String[] c : cases) {
             int[] exitCode = new int[1];

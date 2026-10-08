@@ -71,6 +71,12 @@ final class AvoLog {
         report("streamid-colon", 1, new More("Avo Inspector: streamId contains ':'; using the value verbatim.", ""));
     }
 
+    /** A null event passed to trackSchemaFromEvent: nothing is sent. */
+    static void nullEvent() {
+        report("null-event", 1, new More("Avo Inspector: trackSchemaFromEvent takes one InspectorEvent since 2.0.0, "
+                + "built with InspectorEvent.builder(); it was given null, so nothing was sent.", ""));
+    }
+
     /** An event tracked with a null, empty or whitespace-only name, sent under the placeholder. */
     static void missingEventName() {
         report("missing-event-name", 1, new MissingEventName());

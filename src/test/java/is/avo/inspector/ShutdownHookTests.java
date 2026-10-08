@@ -35,7 +35,7 @@ public class ShutdownHookTests {
             AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder()
                     .apiKey("test-key").appVersion("1.0.0").env(AvoInspectorEnv.Staging).build());
             inspector.networkCallsHandler.endpointForTesting = args[0];
-            inspector.trackSchemaFromEvent("Buffered At Exit", Collections.<String, Object>singletonMap("a", 1));
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Buffered At Exit").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
             if (args.length > 1 && "destroy".equals(args[1])) {
                 inspector.destroy();
             }
@@ -56,7 +56,7 @@ public class ShutdownHookTests {
             for (AvoInspectorEnv env : new AvoInspectorEnv[]{AvoInspectorEnv.Dev, AvoInspectorEnv.Staging}) {
                 AvoInspector inspector = new AvoInspector("test-key", "1.0.0", "App", env);
                 inspector.networkCallsHandler.endpointForTesting = args[0];
-                inspector.trackSchemaFromEvent("E", Collections.<String, Object>singletonMap("a", 1));
+                inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
                 inspector.flush();
                 inspector.destroy();
             }
@@ -131,7 +131,7 @@ public class ShutdownHookTests {
     public void aDrainedInstanceStaysGarbageCollectable() throws Exception {
         AvoInspector inspector = new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging);
         inspector.networkCallsHandler.endpointForTesting = server.url();
-        inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
         java.lang.ref.WeakReference<AvoBatcher> ref = new java.lang.ref.WeakReference<>(inspector.batcher);
         inspector = null;
@@ -144,7 +144,7 @@ public class ShutdownHookTests {
         AvoInspector inspector = new AvoInspector(AvoInspectorOptions.builder().apiKey("test-key").appVersion("1.0.0")
                 .env(AvoInspectorEnv.Staging).disableBatchTimer(true).build());
         inspector.networkCallsHandler.endpointForTesting = server.url();
-        inspector.trackSchemaFromEvent("Orphaned", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Orphaned").eventProperties(Collections.<String, Object>emptyMap()).build());
         java.lang.ref.WeakReference<AvoInspector> ref = new java.lang.ref.WeakReference<>(inspector);
         inspector = null;
         // Give the collector every chance: with pending events the instance must stay reachable.
@@ -164,7 +164,7 @@ public class ShutdownHookTests {
         int[] before = AvoBatcher.hookCountsForTesting();
         // Each dev event registers and then drains the batcher.
         for (int i = 0; i < 20; i++) {
-            inspector.trackSchemaFromEvent("E" + i, Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E" + i).eventProperties(Collections.<String, Object>emptyMap()).build());
             inspector.flush();
         }
         int[] after = AvoBatcher.hookCountsForTesting();
@@ -180,7 +180,7 @@ public class ShutdownHookTests {
     @Test
     public void destroyUnregistersFromTheShutdownFlush() {
         AvoInspector inspector = new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Staging);
-        inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(Collections.<String, Object>emptyMap()).build());
         assertTrue(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));
         inspector.destroy();
         assertFalse(AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));

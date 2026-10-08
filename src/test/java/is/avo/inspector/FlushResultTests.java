@@ -42,7 +42,7 @@ public class FlushResultTests {
     }
 
     private static void track(AvoInspector inspector) {
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
     }
 
     @Test

@@ -7,53 +7,62 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-// The Inspector interface grew default methods: implementations written against 1.x still compile.
+// The 2.0 Inspector interface: one track call taking an InspectorEvent, and no default methods.
 public class InspectorInterfaceTests {
 
-    // Implements only the six 1.x methods.
-    static final class OneXInspector implements Inspector {
-        final List<String> calls = new ArrayList<>();
+    // A wrapper, as a custom implementation is written against 2.0: it implements every method.
+    static final class ForwardingInspector implements Inspector {
+        final Inspector inner;
+        final List<InspectorEvent> tracked = new ArrayList<>();
 
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties) {
-            calls.add("json:" + eventName);
-            return Collections.emptyMap();
+        ForwardingInspector(Inspector inner) {
+            this.inner = inner;
         }
 
         @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget target) {
-            calls.add("json+target:" + eventName);
-            return Collections.emptyMap();
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties) {
-            calls.add("map:" + eventName);
-            return Collections.emptyMap();
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget target) {
-            calls.add("map+target:" + eventName);
-            return Collections.emptyMap();
+        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@Nullable InspectorEvent event) {
+            tracked.add(event);
+            return inner.trackSchemaFromEvent(event);
         }
 
         @Override
         public void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema) {
+            inner.trackSchema(eventName, eventSchema);
         }
 
         @Override
         public @NotNull Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties) {
-            return Collections.emptyMap();
+            return inner.extractSchema(eventProperties);
+        }
+
+        @Override
+        public boolean flush() {
+            return inner.flush();
+        }
+
+        @Override
+        public boolean flush(long timeoutMs) {
+            return inner.flush(timeoutMs);
+        }
+
+        @Override
+        public void destroy() {
+            inner.destroy();
         }
     }
 
@@ -69,117 +78,86 @@ public class InspectorInterfaceTests {
         server.close();
     }
 
-    @Test
-    public void defaultsDelegateToThe1xMethods() {
-        OneXInspector oneX = new OneXInspector();
-        Inspector inspector = oneX;
-        AvoInspectorTarget target = new AvoInspectorTarget("key", "App", "1.0.0");
-        GatewayOptions options = GatewayOptions.builder().outputReference("out").build();
+    private AvoInspector staging() {
+        AvoInspector inspector = new AvoInspector("test-key", "1.0.0", "App", AvoInspectorEnv.Staging);
+        inspector.networkCallsHandler.endpointForTesting = server.url();
+        return inspector;
+    }
 
-        inspector.trackSchemaFromEvent("A", Collections.<String, Object>emptyMap(), "stream", options);
-        inspector.trackSchemaFromEvent("B", new JSONObject(), "stream", options);
-        inspector.trackSchemaFromEvent("C", Collections.<String, Object>emptyMap(), target, "stream", options);
-        inspector.trackSchemaFromEvent("D", new JSONObject(), target, "stream", options);
-        inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap(), "stream");
-        inspector.trackSchemaFromEvent("F", new JSONObject(), "stream");
-        // Nothing of its own to send: the defaults report it drained.
+    @Test
+    public void theInterfaceHasNoDefaultMethodsAndOneTrackCall() {
+        List<String> tracks = new ArrayList<>();
+        for (Method method : Inspector.class.getDeclaredMethods()) {
+            assertFalse(method.toString(), method.isDefault());
+            assertTrue(method.toString(), Modifier.isAbstract(method.getModifiers()));
+            if (method.getName().equals("trackSchemaFromEvent")) {
+                tracks.add(java.util.Arrays.toString(method.getParameterTypes()));
+            }
+        }
+        assertEquals(Collections.singletonList("[class is.avo.inspector.InspectorEvent]"), tracks);
+
+        // No positional form is left on the implementation either.
+        tracks.clear();
+        for (Method method : AvoInspector.class.getMethods()) {
+            if (method.getName().equals("trackSchemaFromEvent")) {
+                tracks.add(java.util.Arrays.toString(method.getParameterTypes()));
+            }
+        }
+        assertEquals(Collections.singletonList("[class is.avo.inspector.InspectorEvent]"), tracks);
+    }
+
+    @Test
+    public void aBuiltEventKeepsEveryValue() {
+        AvoInspectorTarget target = new AvoInspectorTarget("other-key", "Other", "9.9.9");
+        Map<String, Object> props = Collections.<String, Object>singletonMap("a", 1);
+        InspectorEvent event = InspectorEvent.builder().eventName("E").eventProperties(props).streamId("s")
+                .outputReference("out").originHint("web").originAppVersion("2.0").target(target).build();
+
+        assertEquals("E", event.getEventName());
+        assertSame(props, event.getEventProperties());
+        assertEquals("s", event.getStreamId());
+        assertEquals("out", event.getOutputReference());
+        assertEquals("web", event.getOriginHint());
+        assertEquals("2.0", event.getOriginAppVersion());
+        assertSame(target, event.getTarget());
+
+        JSONObject json = new JSONObject().put("a", 1);
+        assertSame(json, InspectorEvent.builder().eventProperties(json).build().getEventProperties());
+
+        InspectorEvent empty = InspectorEvent.builder().build();
+        assertNull(empty.getEventName());
+        assertNull(empty.getEventProperties());
+        assertNull(empty.getStreamId());
+        assertNull(empty.getOutputReference());
+        assertNull(empty.getOriginHint());
+        assertNull(empty.getOriginAppVersion());
+        assertNull(empty.getTarget());
+    }
+
+    @Test
+    public void aWrapperReceivesTheEventAndForwardsIt() throws Exception {
+        ForwardingInspector wrapper = new ForwardingInspector(staging());
+        Inspector inspector = wrapper;
+        InspectorEvent event = InspectorEvent.builder().eventName("Wrapped")
+                .eventProperties(Collections.<String, Object>singletonMap("a", 1)).streamId("s").build();
+
+        assertEquals("int", inspector.trackSchemaFromEvent(event).get("a").toString());
         assertTrue(inspector.flush());
-        assertTrue(inspector.flush(100));
         inspector.destroy();
 
-        assertEquals(java.util.Arrays.asList("map:A", "json:B", "map+target:C", "json+target:D", "map:E", "json:F"),
-                oneX.calls);
-    }
-
-    // Forwards only the GatewayOptions overloads, as a wrapper written before the stream-id-only
-    // overloads existed would.
-    static final class GatewayForwarder implements Inspector {
-        final List<String> calls = new ArrayList<>();
-        final OneXInspector inner = new OneXInspector();
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
-                                                                             @Nullable String streamId, @Nullable GatewayOptions options) {
-            calls.add("map:" + eventName + ":" + streamId + ":" + options);
-            return Collections.emptyMap();
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
-                                                                             @Nullable String streamId, @Nullable GatewayOptions options) {
-            calls.add("json:" + eventName + ":" + streamId + ":" + options);
-            return Collections.emptyMap();
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties) {
-            return inner.trackSchemaFromEvent(eventName, eventProperties);
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget target) {
-            return inner.trackSchemaFromEvent(eventName, eventProperties, target);
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties) {
-            return inner.trackSchemaFromEvent(eventName, eventProperties);
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget target) {
-            return inner.trackSchemaFromEvent(eventName, eventProperties, target);
-        }
-
-        @Override
-        public void trackSchema(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema) {
-        }
-
-        @Override
-        public @NotNull Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties) {
-            return Collections.emptyMap();
-        }
+        assertEquals(Collections.singletonList(event), wrapper.tracked);
+        assertEquals("Wrapped", server.requests().get(0).body.getJSONObject(0).getString("eventName"));
     }
 
     @Test
-    public void theStreamIdOverloadsPassNullGatewayOptions() {
-        GatewayForwarder forwarder = new GatewayForwarder();
-        Inspector inspector = forwarder;
-
-        inspector.trackSchemaFromEvent("A", Collections.<String, Object>emptyMap(), "stream");
-        inspector.trackSchemaFromEvent("B", new JSONObject(), "stream");
-        inspector.trackSchemaFromEvent("C", Collections.<String, Object>emptyMap(), (String) null);
-
-        assertEquals(java.util.Arrays.asList("map:A:stream:null", "json:B:stream:null", "map:C:null:null"), forwarder.calls);
-        assertTrue(forwarder.inner.calls.isEmpty());
-    }
-
-    @Test
-    public void avoInspectorSendsTheStreamIdWithoutGatewayFields() throws Exception {
-        AvoInspector avoInspector = new AvoInspector("test-key", "1.0.0", "App", AvoInspectorEnv.Staging);
-        avoInspector.networkCallsHandler.endpointForTesting = server.url();
-
-        avoInspector.trackSchemaFromEvent("Streamed", Collections.<String, Object>singletonMap("a", 1), "stream-2");
-        avoInspector.flush();
-        avoInspector.destroy();
-
-        MockInspectorServer.Request request = server.awaitRequest(0, 5000);
-        assertNotNull(request);
-        JSONObject event = request.body.getJSONObject(0);
-        assertEquals("stream-2", event.getString("streamId"));
-        assertEquals("1.0.0", event.getString("appVersion"));
-        assertTrue(event.toString(), !event.has("outputReference") && !event.has("originHint"));
-    }
-
-    @Test
-    public void avoInspectorImplementsTheNewMethods() throws Exception {
-        AvoInspector avoInspector = new AvoInspector("test-key", "1.0.0", "App", AvoInspectorEnv.Staging);
-        avoInspector.networkCallsHandler.endpointForTesting = server.url();
+    public void theTargetStreamIdAndGatewayValuesReachTheWire() throws Exception {
+        AvoInspector avoInspector = staging();
         Inspector inspector = avoInspector;
 
-        inspector.trackSchemaFromEvent("Targeted", Collections.<String, Object>singletonMap("a", 1),
-                new AvoInspectorTarget("other-key", "Other", "9.9.9"), "stream-1",
-                GatewayOptions.builder().outputReference(" out ").build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Targeted")
+                .eventProperties(Collections.<String, Object>singletonMap("a", 1))
+                .target(new AvoInspectorTarget("other-key", "Other", "9.9.9")).streamId("stream-1")
+                .outputReference(" out ").build());
         inspector.flush();
 
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
@@ -192,8 +170,43 @@ public class InspectorInterfaceTests {
         assertEquals("out", event.getString("outputReference"));
 
         inspector.destroy();
-        inspector.trackSchemaFromEvent("AfterDestroy", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("AfterDestroy").build());
         inspector.flush();
         assertEquals(1, server.requests().size());
+    }
+
+    @Test
+    public void aStreamIdAloneSendsNoGatewayFields() throws Exception {
+        AvoInspector avoInspector = staging();
+        avoInspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Streamed")
+                .eventProperties(Collections.<String, Object>singletonMap("a", 1)).streamId("stream-2").build());
+        avoInspector.flush();
+        avoInspector.destroy();
+
+        JSONObject event = server.requests().get(0).body.getJSONObject(0);
+        assertEquals("stream-2", event.getString("streamId"));
+        assertEquals("1.0.0", event.getString("appVersion"));
+        assertEquals("App", event.getString("appName"));
+        assertTrue(event.toString(), !event.has("outputReference") && !event.has("originHint"));
+    }
+
+    @Test
+    public void mapAndJsonObjectPropertiesGiveTheSameWireEvent() throws Exception {
+        AvoInspector avoInspector = staging();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("n", 1);
+        avoInspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(map).build());
+        avoInspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(new JSONObject().put("n", 1)).build());
+        avoInspector.flush();
+        avoInspector.destroy();
+
+        List<String> bodies = new ArrayList<>();
+        for (MockInspectorServer.Request request : server.requests()) {
+            for (int i = 0; i < request.body.length(); i++) {
+                bodies.add(request.body.getJSONObject(i).getJSONArray("eventProperties").toString());
+            }
+        }
+        assertEquals(java.util.Arrays.asList("[{\"propertyName\":\"n\",\"propertyType\":\"int\"}]",
+                "[{\"propertyName\":\"n\",\"propertyType\":\"int\"}]"), bodies);
     }
 }

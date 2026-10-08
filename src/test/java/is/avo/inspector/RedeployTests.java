@@ -86,9 +86,15 @@ public class RedeployTests {
             endpoint.setAccessible(true);
             endpoint.set(handler, server.url());
             lastHandler = handler;
-            Method track = inspectorClass.getMethod("trackSchemaFromEvent", String.class, Map.class);
+            Class<?> eventClass = loader.loadClass("is.avo.inspector.InspectorEvent");
+            Method track = inspectorClass.getMethod("trackSchemaFromEvent", eventClass);
+            Method newEvent = eventClass.getMethod("builder");
+            Class<?> eventBuilderClass = newEvent.getReturnType();
             for (int i = 0; i < events; i++) {
-                track.invoke(inspector, "Redeploy", Collections.<String, Object>singletonMap("a", i));
+                Object eventBuilder = newEvent.invoke(null);
+                eventBuilderClass.getMethod("eventName", String.class).invoke(eventBuilder, "Redeploy");
+                eventBuilderClass.getMethod("eventProperties", Map.class).invoke(eventBuilder, Collections.<String, Object>singletonMap("a", i));
+                track.invoke(inspector, eventBuilderClass.getMethod("build").invoke(eventBuilder));
             }
             if (flush) {
                 inspectorClass.getMethod("flush").invoke(inspector);

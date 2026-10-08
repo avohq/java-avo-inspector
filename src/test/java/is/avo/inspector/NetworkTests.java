@@ -73,7 +73,7 @@ public class NetworkTests {
         AvoInspector inspector = inspector(AvoInspectorEnv.Staging, 1);
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("zero", 0.0);
-        inspector.trackSchemaFromEvent("Event", props);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(props).build());
         inspector.flush();
 
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
@@ -203,9 +203,9 @@ public class NetworkTests {
         server.respond(200, "{\"success\":false}");
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
 
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         inspector.flush();
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         inspector.flush();
 
         assertEquals(2, server.requests().size());
@@ -216,7 +216,7 @@ public class NetworkTests {
         AvoInspector dropping = inspector(AvoInspectorEnv.Staging, 10);
         dropping.setSamplingRateForTesting(0.0);
         for (int i = 0; i < 100; i++) {
-            dropping.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            dropping.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         assertEquals(0, dropping.batcher.bufferedCount());
         dropping.flush();
@@ -225,7 +225,7 @@ public class NetworkTests {
         AvoInspector keeping = inspector(AvoInspectorEnv.Staging, 10);
         keeping.setSamplingRateForTesting(1.0);
         for (int i = 0; i < 100; i++) {
-            keeping.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            keeping.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         keeping.flush();
         int events = 0;
@@ -245,12 +245,12 @@ public class NetworkTests {
         }
         inspector.networkCallsHandler.endpointForTesting = unreachable;
 
-        inspector.trackSchemaFromEvent("E1", Collections.<String, Object>emptyMap());
-        inspector.trackSchemaFromEvent("E2", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(Collections.<String, Object>emptyMap()).build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E2").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
 
         inspector.networkCallsHandler.endpointForTesting = server.url();
-        inspector.trackSchemaFromEvent("E3", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E3").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
 
         assertEquals(1, server.requests().size());
@@ -381,7 +381,7 @@ public class NetworkTests {
     @Test
     public void bodyIsUtf8() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
-        inspector.trackSchemaFromEvent("Événement ✓", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Événement ✓").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
         assertNotNull(request);

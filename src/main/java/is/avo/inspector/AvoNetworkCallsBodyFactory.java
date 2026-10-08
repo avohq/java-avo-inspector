@@ -23,11 +23,13 @@ class AvoNetworkCallsBodyFactory {
                                                @NotNull Map<String, AvoEventSchemaType> schema,
                                                @NotNull AvoInspectorTarget avoInspectorTarget,
                                                @NotNull String streamId,
-                                               @Nullable GatewayOptions options,
+                                               @Nullable String rawOutputReference,
+                                               @Nullable String rawOriginHint,
+                                               @Nullable String rawOriginAppVersion,
                                                double samplingRate) {
-        String outputReference = options != null ? normalize(options.getOutputReference()) : null;
-        String originHint = options != null ? normalize(options.getOriginHint()) : null;
-        String originAppVersion = options != null ? normalize(options.getOriginAppVersion()) : null;
+        String outputReference = normalize(rawOutputReference);
+        String originHint = normalize(rawOriginHint);
+        String originAppVersion = normalize(rawOriginAppVersion);
 
         // SPEC.md §7.3.6: a source-scoped event never carries the instance's version.
         String appVersion;

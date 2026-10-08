@@ -49,7 +49,7 @@ public class SharedSendPoolTests {
                     .env(AvoInspectorEnv.Staging).batchSize(1).build());
             inspector.networkCallsHandler.endpointForTesting = server.url();
             inspectors.add(inspector);
-            inspector.trackSchemaFromEvent("E" + i, Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E" + i).eventProperties(Collections.<String, Object>emptyMap()).build());
             peak = Math.max(peak, sendThreads());
         }
         assertTrue("send threads: " + peak, peak <= AvoBatcher.SHARED_SEND_THREADS);
@@ -76,7 +76,7 @@ public class SharedSendPoolTests {
             inspectors.add(inspector);
 
             // Must not throw out of track.
-            inspector.trackSchemaFromEvent("E", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E").eventProperties(Collections.<String, Object>emptyMap()).build());
 
             assertEquals(0, inspector.batcher.pendingCount());
             assertTrue(!AvoBatcher.isRegisteredForShutdownFlush(inspector.batcher));

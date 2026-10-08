@@ -223,6 +223,9 @@ public final class ConformanceHarness {
         if (badField != null) {
             return badField + " must be a string";
         }
+        if (input.get("eventProperties") != null && !(input.get("eventProperties") instanceof Map)) {
+            return "eventProperties must be an object";
+        }
         if (input.get("options") != null && !(input.get("options") instanceof Map)) {
             return "options must be an object";
         }
@@ -237,19 +240,19 @@ public final class ConformanceHarness {
 
     // Returns {outcome, value}. A thrown SDK error is the Java form of a rejected promise.
     private static Object[] track(AvoInspector inspector, Map<String, Object> input) {
-        GatewayOptions options = null;
+        // Passed verbatim: normalization is the SDK's job.
+        InspectorEvent.Builder event = InspectorEvent.builder()
+                .eventName((String) input.get("eventName"))
+                .eventProperties(input.get("eventProperties") instanceof Map ? asMap(input.get("eventProperties")) : null)
+                .streamId((String) input.get("streamId"));
         if (input.get("options") instanceof Map) {
-            // Passed verbatim: normalization is the SDK's job.
             Map<String, Object> raw = asMap(input.get("options"));
-            options = GatewayOptions.builder()
-                    .outputReference((String) raw.get("outputReference"))
+            event.outputReference((String) raw.get("outputReference"))
                     .originHint((String) raw.get("originHint"))
-                    .originAppVersion((String) raw.get("originAppVersion"))
-                    .build();
+                    .originAppVersion((String) raw.get("originAppVersion"));
         }
         try {
-            Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEventAwaitingSend(
-                    (String) input.get("eventName"), input.get("eventProperties"), (String) input.get("streamId"), options);
+            Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEventAwaitingSend(event.build());
             return new Object[]{"resolve", Util.remapProperties(schema)};
         } catch (RuntimeException e) {
             return new Object[]{"reject", e.getMessage()};
@@ -277,7 +280,8 @@ public final class ConformanceHarness {
                             return;
                         }
                         for (int i = next.getAndIncrement(); i < count; i = next.getAndIncrement()) {
-                            inspector.trackSchemaFromEventAwaitingSend(prefix + i, Collections.emptyMap(), streamId, null);
+                            inspector.trackSchemaFromEventAwaitingSend(InspectorEvent.builder()
+                                    .eventName(prefix + i).eventProperties(Collections.<String, Object>emptyMap()).streamId(streamId).build());
                         }
                     }
                 });
