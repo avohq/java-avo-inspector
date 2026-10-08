@@ -202,7 +202,7 @@ public class AvoInspector implements Inspector {
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
     @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
     }
 
@@ -213,7 +213,7 @@ public class AvoInspector implements Inspector {
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
     @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
     }
 
@@ -234,7 +234,7 @@ public class AvoInspector implements Inspector {
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
     @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
     }
 
@@ -245,7 +245,7 @@ public class AvoInspector implements Inspector {
      * @param options  gateway coordinates for this call only; may be {@code null}
      */
     @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
     }
 
@@ -254,13 +254,13 @@ public class AvoInspector implements Inspector {
      * is sent immediately ({@code batchSize == 1}) it waits for that send and reports a non-200 as an
      * empty schema, which is the per-call outcome of SPEC.md §7.5.
      */
-    @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEventAwaitingSend(@NotNull String eventName, @Nullable Object eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
+    @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEventAwaitingSend(@NotNull String eventName, @Nullable Object eventProperties, @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, true);
     }
 
     private @NotNull Map<String, AvoEventSchemaType> trackFromEvent(@NotNull String eventName, @Nullable Object eventProperties,
                                                                     @NotNull AvoInspectorTarget target, @Nullable String streamId,
-                                                                    @Nullable TrackOptions options, boolean awaitImmediateSend) {
+                                                                    @Nullable GatewayOptions options, boolean awaitImmediateSend) {
         if (destroyed) {
             return new LinkedHashMap<>();
         }
@@ -303,7 +303,7 @@ public class AvoInspector implements Inspector {
 
     private List<Future<AvoNetworkCallsHandler.SendResult>> trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
                                                                                  @NotNull AvoInspectorTarget avoInspectorTarget,
-                                                                                 @Nullable String streamId, @Nullable TrackOptions options) {
+                                                                                 @Nullable String streamId, @Nullable GatewayOptions options) {
         // eventName is a required string on the wire (SPEC.md §7.3.2). A missing one is reported
         // under a placeholder rather than dropped (the cross-SDK rule); a valid name is sent as
         // given, surrounding whitespace included.

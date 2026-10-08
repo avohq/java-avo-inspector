@@ -241,7 +241,7 @@ public class BatchingTests {
         // SPEC.md §7.3.6: a source-scoped event never carries a configured version, the target's included.
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         inspector.trackSchemaFromEvent("P", NO_PROPS, new AvoInspectorTarget("other-key", "Other", "9.9.9"), null,
-                TrackOptions.builder().originHint("web").build());
+                GatewayOptions.builder().originHint("web").build());
         inspector.flush();
 
         JSONObject event = server.requests().get(0).body.getJSONObject(0);
@@ -255,9 +255,9 @@ public class BatchingTests {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         Map<String, Object> props = Collections.<String, Object>singletonMap("a", 1);
 
-        inspector.trackSchemaFromEvent("P", props, "s1", TrackOptions.builder().outputReference(" meta ").originAppVersion("4.2.0").build());
-        inspector.trackSchemaFromEvent("P", props, "s1", TrackOptions.builder().outputReference("ga4").originHint(" android ").build());
-        inspector.trackSchemaFromEvent("P", props, null, TrackOptions.builder().originHint("   ").originAppVersion("").build());
+        inspector.trackSchemaFromEvent("P", props, "s1", GatewayOptions.builder().outputReference(" meta ").originAppVersion("4.2.0").build());
+        inspector.trackSchemaFromEvent("P", props, "s1", GatewayOptions.builder().outputReference("ga4").originHint(" android ").build());
+        inspector.trackSchemaFromEvent("P", props, null, GatewayOptions.builder().originHint("   ").originAppVersion("").build());
         inspector.flush();
 
         assertEquals(1, server.requests().size());

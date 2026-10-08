@@ -117,7 +117,7 @@ With a gateway-scoped API key, always pass `originHint` and `originAppVersion`. 
 observation at the gateway checkpoint.
 
 ```java
-avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", TrackOptions.builder()
+avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", GatewayOptions.builder()
         .outputReference("meta-x7k2q")
         .originHint("android")
         .originAppVersion("4.2.0")
@@ -152,10 +152,10 @@ matters to you (a `JSONObject` does not keep insertion order).
 
 Pass a stream id (any correlation id you choose; `null` sends `""`) and, when you use a
 gateway-scoped API key, the gateway coordinates. Java has no named arguments, so the three
-coordinates are grouped in one `TrackOptions` object:
+coordinates are grouped in one `GatewayOptions` object:
 
 ```java
-avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", TrackOptions.builder()
+avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", GatewayOptions.builder()
         .outputReference("meta-x7k2q")   // gateway output the event was bound for; omit for the gateway checkpoint
         .originHint("android")           // low-cardinality source label; never a user id
         .originAppVersion("4.2.0")       // that source's app version
@@ -184,7 +184,7 @@ and gateway options, use `trackSchemaFromEvent(eventName, properties, target, st
 All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
 methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
 If your implementation wraps an `AvoInspector`, forward `flush()`, `flush(long)` and `destroy()` to
-it: the defaults do nothing (the `flush` defaults return `true`). Forward the stream id and `TrackOptions` overloads too; their defaults
+it: the defaults do nothing (the `flush` defaults return `true`). Forward the stream id and `GatewayOptions` overloads too; their defaults
 call the 1.x methods and drop the stream id and options.
 
 ### 2.

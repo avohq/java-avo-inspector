@@ -237,11 +237,11 @@ public final class ConformanceHarness {
 
     // Returns {outcome, value}. A thrown SDK error is the Java form of a rejected promise.
     private static Object[] track(AvoInspector inspector, Map<String, Object> input) {
-        TrackOptions options = null;
+        GatewayOptions options = null;
         if (input.get("options") instanceof Map) {
             // Passed verbatim: normalization is the SDK's job.
             Map<String, Object> raw = asMap(input.get("options"));
-            options = TrackOptions.builder()
+            options = GatewayOptions.builder()
                     .outputReference((String) raw.get("outputReference"))
                     .originHint((String) raw.get("originHint"))
                     .originAppVersion((String) raw.get("originAppVersion"))

@@ -23,7 +23,7 @@ class AvoNetworkCallsBodyFactory {
                                                @NotNull Map<String, AvoEventSchemaType> schema,
                                                @NotNull AvoInspectorTarget avoInspectorTarget,
                                                @NotNull String streamId,
-                                               @Nullable TrackOptions options,
+                                               @Nullable GatewayOptions options,
                                                double samplingRate) {
         String outputReference = options != null ? normalize(options.getOutputReference()) : null;
         String originHint = options != null ? normalize(options.getOriginHint()) : null;

@@ -74,7 +74,7 @@ public class InspectorInterfaceTests {
         OneXInspector oneX = new OneXInspector();
         Inspector inspector = oneX;
         AvoInspectorTarget target = new AvoInspectorTarget("key", "App", "1.0.0");
-        TrackOptions options = TrackOptions.builder().outputReference("out").build();
+        GatewayOptions options = GatewayOptions.builder().outputReference("out").build();
 
         inspector.trackSchemaFromEvent("A", Collections.<String, Object>emptyMap(), "stream", options);
         inspector.trackSchemaFromEvent("B", new JSONObject(), "stream", options);
@@ -96,7 +96,7 @@ public class InspectorInterfaceTests {
 
         inspector.trackSchemaFromEvent("Targeted", Collections.<String, Object>singletonMap("a", 1),
                 new AvoInspectorTarget("other-key", "Other", "9.9.9"), "stream-1",
-                TrackOptions.builder().outputReference(" out ").build());
+                GatewayOptions.builder().outputReference(" out ").build());
         inspector.flush();
 
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);

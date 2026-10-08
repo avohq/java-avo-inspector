@@ -14,7 +14,7 @@ import java.util.Map;
  * compiling. A custom implementation that wraps an {@link AvoInspector} must override and forward
  * {@link #flush()}, {@link #flush(long)} and {@link #destroy()}: their defaults do nothing, so a
  * wrapper that does not forward them never sends buffered events on flush and never stops the
- * instance it wraps. It should also forward the stream id and {@link TrackOptions} overloads,
+ * instance it wraps. It should also forward the stream id and {@link GatewayOptions} overloads,
  * whose defaults call the 1.x methods and drop the stream id and options.
  */
 @SuppressWarnings("UnusedReturnValue")
@@ -71,14 +71,14 @@ public interface Inspector {
     /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
     @NotNull
     default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
-                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackSchemaFromEvent(eventName, eventProperties);
     }
 
     /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
     @NotNull
     default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
-                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackSchemaFromEvent(eventName, eventProperties);
     }
 
@@ -86,7 +86,7 @@ public interface Inspector {
     @NotNull
     default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
                                                                @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
-                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
     }
 
@@ -94,7 +94,7 @@ public interface Inspector {
     @NotNull
     default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
                                                                @NotNull AvoInspectorTarget overrideAvoInspectorTarget,
-                                                               @Nullable String streamId, @Nullable TrackOptions options) {
+                                                               @Nullable String streamId, @Nullable GatewayOptions options) {
         return trackSchemaFromEvent(eventName, eventProperties, overrideAvoInspectorTarget);
     }
 

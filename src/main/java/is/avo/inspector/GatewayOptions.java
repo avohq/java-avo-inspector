@@ -10,19 +10,19 @@ import org.jetbrains.annotations.Nullable;
  * {@code originHint} is a low-cardinality label of the source the event came from (e.g. "web",
  * "ios"); it must never be a user identifier or any other high-cardinality value.
  */
-public final class TrackOptions {
+public final class GatewayOptions {
 
     @Nullable private final String outputReference;
     @Nullable private final String originHint;
     @Nullable private final String originAppVersion;
 
-    private TrackOptions(@Nullable String outputReference, @Nullable String originHint, @Nullable String originAppVersion) {
+    private GatewayOptions(@Nullable String outputReference, @Nullable String originHint, @Nullable String originAppVersion) {
         this.outputReference = outputReference;
         this.originHint = originHint;
         this.originAppVersion = originAppVersion;
     }
 
-    /** Starts a {@link TrackOptions} with no values set. */
+    /** Starts a {@link GatewayOptions} with no values set. */
     @NotNull
     public static Builder builder() {
         return new Builder();
@@ -46,7 +46,7 @@ public final class TrackOptions {
         return originAppVersion;
     }
 
-    /** Builds a {@link TrackOptions}. Every value is optional. */
+    /** Builds a {@link GatewayOptions}. Every value is optional. */
     public static final class Builder {
         @Nullable private String outputReference;
         @Nullable private String originHint;
@@ -78,8 +78,8 @@ public final class TrackOptions {
 
         /** Returns the options. */
         @NotNull
-        public TrackOptions build() {
-            return new TrackOptions(outputReference, originHint, originAppVersion);
+        public GatewayOptions build() {
+            return new GatewayOptions(outputReference, originHint, originAppVersion);
         }
     }
 }
