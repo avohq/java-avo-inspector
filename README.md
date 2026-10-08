@@ -112,6 +112,17 @@ void trackAppOpened(Map<String, ?> appOpenedEventParams) {
 }
 ```
 
+With a gateway-scoped API key, pass all three values: the output reference, the origin hint and
+the origin app version.
+
+```java
+avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", TrackOptions.builder()
+        .outputReference("meta-x7k2q")
+        .originHint("android")
+        .originAppVersion("4.2.0")
+        .build());
+```
+
 Read more in the [Avo documentation](https://www.avo.app/docs/implementation/devs-101#inspecting-events)
 
 ### 1.
