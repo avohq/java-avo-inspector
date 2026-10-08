@@ -217,8 +217,9 @@ public class AvoSchemaExtractor {
 	}
 
 	// The array branch of mapping(), in one pass over the elements: the list type comes from the
-	// first element, each element is mapped, primitive types are deduplicated by value. Objects and
-	// nested lists are never merged (reference identity in the JS reference parser).
+	// first element, each element is mapped, and children keep each distinct schema once, in
+	// first-occurrence order. Objects are compared by value regardless of property order, nested
+	// lists in order (AvoEventSchemaType.childKey(), one hash lookup per element).
 	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Walk walk) {
 		Class<?> component = list.getClass().getComponentType();
 		if (component != null && component.isPrimitive()) {
@@ -237,7 +238,7 @@ public class AvoSchemaExtractor {
 		String elementType = "string";
 		boolean first = true;
 		List<AvoEventSchemaType> children = new ArrayList<>();
-		Set<String> seenPrimitives = new HashSet<>();
+		Set<String> seenChildren = new HashSet<>();
 		// The 1.1.1 union (toString/equals) dedups by 1.1.1 name, which can differ from the wire
 		// name: BigInteger is "int" on the wire but was "unknown".
 		List<AvoEventSchemaType> legacyElements = new ArrayList<>();
@@ -251,7 +252,7 @@ public class AvoSchemaExtractor {
 			AvoEventSchemaType mapped = objectToAvoType(element, depth, walk);
 			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
 					|| mapped instanceof AvoEventSchemaType.AvoList;
-			if (nonPrimitive || seenPrimitives.add(mapped.getReportedName())) {
+			if (seenChildren.add(mapped.childKey())) {
 				children.add(mapped);
 			}
 			if (nonPrimitive || seenLegacyPrimitives.add(mapped.legacyName())) {

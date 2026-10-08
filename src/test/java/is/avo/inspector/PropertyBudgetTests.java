@@ -96,10 +96,15 @@ public class PropertyBudgetTests {
 
     @Test
     public void propertiesOfObjectsInsideListsCount() {
-        // "items" (1) + 4,000 + 4,000 + 1,999 properties of the three maps in the list.
+        // "items" (1) + 4,000 + 4,000 + 1,999 properties of the three maps in the list. The maps
+        // have different keys, so the list keeps all three.
         List<Object> items = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            items.add(flat(4_000));
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (int k = 0; k < 4_000; k++) {
+                map.put("m" + i + "key" + k, k);
+            }
+            items.add(map);
         }
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("items", items);
@@ -113,6 +118,26 @@ public class PropertyBudgetTests {
         assertEquals(4_000, ((AvoEventSchemaType.AvoObject) children.get(1)).children.size());
         assertEquals(1_999, ((AvoEventSchemaType.AvoObject) children.get(2)).children.size());
         assertEquals(10_000, entries(schema));
+    }
+
+    @Test
+    public void aDeduplicatedListChildStillCounts() {
+        // The second map equals the first and is left out of children, but its 4,000 properties
+        // were counted: the third map keeps 1,999 and "after" is omitted.
+        List<Object> items = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            items.add(flat(4_000));
+        }
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("items", items);
+        input.put("after", 1);
+        Map<String, AvoEventSchemaType> schema = extract(input);
+
+        assertEquals(Arrays.asList("items"), new ArrayList<>(schema.keySet()));
+        List<AvoEventSchemaType> children = ((AvoEventSchemaType.AvoList) schema.get("items")).children;
+        assertEquals(2, children.size());
+        assertEquals(4_000, ((AvoEventSchemaType.AvoObject) children.get(0)).children.size());
+        assertEquals(1_999, ((AvoEventSchemaType.AvoObject) children.get(1)).children.size());
     }
 
     @Test

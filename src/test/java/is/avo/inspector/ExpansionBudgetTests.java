@@ -130,7 +130,8 @@ public class ExpansionBudgetTests {
 
     @Test(timeout = 10_000)
     public void listFanOutSixIsCutByTheBudgetLikeNode() throws Exception {
-        assertMatchesNode(listDag(6, 12), 178576, "3dc637ef3e554a0e1aecec9dcec0933e51c94b66f6064e7be996f1ee8c1a5670",
-                8570, 7140, 3);
+        // Equal list children are kept once, so only the subtrees the budget cut differ.
+        assertMatchesNode(listDag(6, 12), 386, "fa36cee2d9450d07e0b374330e796ce55b03dc8e37b44af34c902d60b0c787e5",
+                15, 3, 3);
     }
 }
