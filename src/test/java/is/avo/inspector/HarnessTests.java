@@ -221,6 +221,27 @@ public class HarnessTests {
     }
 
     @Test(timeout = 60_000)
+    public void unknownFieldsInTheEnvelopeStepsAndMockResponseAreIgnored() throws Exception {
+        try (MockInspectorServer server = new MockInspectorServer()) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"extra\",\"operation\":\"sequence\","
+                    + "\"futureField\":{\"x\":1},\"notes\":\"n\","
+                    + "\"mock_response\":{\"status\":200,\"body\":{\"samplingRate\":1.0},\"delayMs\":5,\"headers\":{}},"
+                    + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"staging\",\"version\":\"1.0.0\",\"disableBatchTimer\":true},"
+                    + "\"steps\":[{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{\"a\":1},\"comment\":\"c\"},"
+                    + "{\"action\":\"flush\",\"label\":7}]}",
+                    exitCode, server.url());
+
+            assertEquals(output, 0, exitCode[0]);
+            JSONObject result = new JSONObject(output);
+            assertTrue(result.getBoolean("passed"));
+            assertEquals("track", result.getJSONArray("actual").getJSONObject(0).getString("action"));
+            assertEquals(true, result.getJSONArray("actual").getJSONObject(1).get("value"));
+            assertEquals(1, server.requests().size());
+        }
+    }
+
+    @Test(timeout = 60_000)
     public void trackNMakesEveryCallWhenCountExceedsTheWorkerPool() throws Exception {
         // Well above the harness's pool of 64 workers.
         int count = 500;
