@@ -112,8 +112,9 @@ void trackAppOpened(Map<String, ?> appOpenedEventParams) {
 }
 ```
 
-With a gateway-scoped API key, pass all three values: the output reference, the origin hint and
-the origin app version.
+With a gateway-scoped API key, always pass `originHint` and `originAppVersion`. Pass
+`outputReference` when the payload was bound for a specific output; leave it out for an
+observation at the gateway checkpoint.
 
 ```java
 avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", TrackOptions.builder()
