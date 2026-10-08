@@ -101,14 +101,16 @@ AvoInspector.enableLogging(true);
 
 # Sending event schemas
 
-Whenever you send tracking event call one of the following methods.
-
-Example usage:
+Whenever you send a tracking event, track it with Avo Inspector too. `trackSchemaFromEvent` takes
+one `InspectorEvent`:
 
 ```java
 void trackAppOpened(Map<String, ?> appOpenedEventParams) {
     tracker.track("App Opened", appOpenedEventParams);
-    this.avoInspector.trackSchemaFromEvent("App Opened", appOpenedEventParams);
+    this.avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+            .eventName("App Opened")
+            .eventProperties(appOpenedEventParams)
+            .build());
 }
 ```
 
@@ -117,7 +119,10 @@ With a gateway-scoped API key, always pass `originHint` and `originAppVersion`. 
 observation at the gateway checkpoint.
 
 ```java
-avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", GatewayOptions.builder()
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Purchase")
+        .eventProperties(properties)
+        .streamId("stream-id")
         .outputReference("meta-x7k2q")
         .originHint("android")
         .originAppVersion("4.2.0")
@@ -128,68 +133,64 @@ Read more in the [Avo documentation](https://www.avo.app/docs/implementation/dev
 
 ### 1.
 
-These methods get actual tracking event parameters, extract schema automatically and send it to the Avo Inspector backend.
-It is the easiest way to use the library, just call this method at the same place you call your analytics tools' track methods with the same parameters.
+`trackSchemaFromEvent` gets the actual tracking event properties, extracts the schema
+automatically and sends it to the Avo Inspector backend. It is the easiest way to use the library:
+call it at the same place you call your analytics tools' track methods, with the same values.
 
 ```java
-avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
-                        put("String Prop", "Prop Value");
-                        put("Float Name", 1.0);
-                        put("Bool Name", true);
-                    }});
-```
-Second parameter can also be a `JSONObject`.
-
-An event tracked with a `null`, empty or whitespace-only name is still sent, under the event name
-`Missing Event Name`, and a warning is printed (at most once every 10 seconds). A valid name is
-sent exactly as given, surrounding whitespace included.
-
-The method returns the extracted schema as soon as the event is queued; it never waits for the
-network. Property order follows the map's iteration order, so use a `LinkedHashMap` if order
-matters to you (a `JSONObject` does not keep insertion order).
-
-#### Stream id and gateway options
-
-Pass a stream id (any correlation id you choose; `null` sends `""`) and, when you use a
-gateway-scoped API key, the gateway coordinates. Java has no named arguments, so the three
-coordinates are grouped in one `GatewayOptions` object:
-
-```java
-avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", GatewayOptions.builder()
-        .outputReference("meta-x7k2q")   // gateway output the event was bound for; omit for the gateway checkpoint
-        .originHint("android")           // low-cardinality source label; never a user id
-        .originAppVersion("4.2.0")       // that source's app version
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Event name")
+        .eventProperties(new HashMap<String, Object>() {{
+            put("String Prop", "Prop Value");
+            put("Float Name", 1.0);
+            put("Bool Name", true);
+        }})
         .build());
 ```
 
-Without gateway options, pass the stream id alone:
-`trackSchemaFromEvent("Purchase", properties, "stream-id")`. A bare `null` stream id there does not
-compile, because it also matches the `AvoInspectorTarget` overload; write `(String) null`.
+`eventProperties` also takes a `JSONObject`. Every value of an `InspectorEvent` is optional:
 
-Values are trimmed and blank values are ignored. When `originHint` is set without
+| Builder method | Meaning |
+|---|---|
+| `eventName` | The event name. A `null`, empty or whitespace-only name is still sent, under the event name `Missing Event Name`, and a warning is printed (at most once every 10 seconds). A valid name is sent exactly as given, surrounding whitespace included. |
+| `eventProperties` | A `Map<String, ?>` or a `JSONObject`. None means no properties. |
+| `streamId` | Any correlation id you choose; none sends `""`. |
+| `outputReference` | The gateway output the event was bound for; leave it out for the gateway checkpoint. |
+| `originHint` | A low-cardinality label of the source the event came from, e.g. `"android"`; never a user id. |
+| `originAppVersion` | That source's app version, sent instead of the instance's. |
+| `target` | An `AvoInspectorTarget` to send the event to another Avo source (see below). |
+
+The gateway values are trimmed and blank values are ignored. When `originHint` is set without
 `originAppVersion`, the event is sent with a `null` app version (the instance's version belongs to
 a different source).
 
+A `null` event sends nothing and returns an empty schema; a line on stderr (at most once every 10
+seconds) says that the call takes one `InspectorEvent`.
+
+The method returns the extracted schema as soon as the event is queued; it never waits for the
+network. Property order follows the map's iteration order, so use a `LinkedHashMap` if order
+matters to you (a `JSONObject` does not keep insertion order). The properties are read when the
+event is tracked: build a new `InspectorEvent` for each call.
+
 #### Override Avo source
 
-You can track a schema for an Avo source different from the one you've initialised Avo Inspector instance with by providing an additional `AvoInspectorTarget` parameter to the `trackSchemaFromEvent` call.
+You can track a schema for an Avo source different from the one you've initialised Avo Inspector
+instance with by setting a `target`:
 
 ```java
-avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
-                        put("String Prop", "Prop Value");
-                        put("Float Name", 1.0);
-                        put("Bool Name", true);
-                    }}, new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"));
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Event name")
+        .eventProperties(properties)
+        .target(new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"))
+        .build());
 ```
 
-Events for different targets are sent in separate requests. To combine a target with a stream id
-and gateway options, use `trackSchemaFromEvent(eventName, properties, target, streamId, options)`.
+Events for different targets are sent in separate requests.
 
-All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
-methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
-If your implementation wraps an `AvoInspector`, forward `flush()`, `flush(long)` and `destroy()` to
-it: the defaults do nothing (the `flush` defaults return `true`). Forward the stream id and `GatewayOptions` overloads too; their defaults
-call the 1.x methods and drop the stream id and options.
+`trackSchemaFromEvent`, `trackSchema`, `extractSchema`, `flush()`, `flush(long)` and `destroy()`
+are the `Inspector` interface. It has no default methods: your own `Inspector` implementation
+implements all of them. If it wraps an `AvoInspector`, forward each one, `flush` and `destroy`
+included, or the wrapped instance never sends what it buffered.
 
 ### 2.
 
@@ -316,7 +317,10 @@ AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
 
 ```java
 for (int i = 0; i < rows.size(); i++) {
-    avoInspector.trackSchemaFromEvent(rows.get(i).eventName, rows.get(i).properties);
+    avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+            .eventName(rows.get(i).eventName)
+            .eventProperties(rows.get(i).properties)
+            .build());
     if (i % 5000 == 4999) {
         avoInspector.flush();
     }
@@ -342,7 +346,38 @@ are reported on stderr.
 
 # Upgrading from 1.x to 2.0
 
-2.0.0 keeps every existing constructor and method, but these behaviours change:
+2.0.0 keeps every constructor. The track call changes, and so does the `Inspector` interface:
+
+- **`trackSchemaFromEvent` takes one `InspectorEvent`.** Every positional form is removed: the 1.x
+  `trackSchemaFromEvent(eventName, properties)` and `trackSchemaFromEvent(eventName, properties,
+  target)`, for `Map` and `JSONObject` properties. Build the event instead:
+
+  ```java
+  // 1.x
+  avoInspector.trackSchemaFromEvent("Signed Up", properties);
+  avoInspector.trackSchemaFromEvent("Signed Up", properties, otherTarget);
+
+  // 2.0
+  avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+          .eventName("Signed Up")
+          .eventProperties(properties)
+          .build());
+  avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+          .eventName("Signed Up")
+          .eventProperties(properties)
+          .target(otherTarget)
+          .build());
+  ```
+
+  The same values produce the same request as before. `trackSchema` and `extractSchema` are
+  unchanged.
+- **A custom `Inspector` implementation must implement the 2.0 interface.** It declares
+  `trackSchemaFromEvent(InspectorEvent)`, `trackSchema`, `extractSchema`, `boolean flush()`,
+  `boolean flush(long)` and `void destroy()`, with no default methods. `flush` returns `true` when
+  nothing is left buffered, waiting or in flight. That means drained, not delivered: a send can
+  have failed or events can have been dropped (both are reported on stderr).
+
+These behaviours change too:
 
 - **Events are buffered outside dev.** In staging and prod, events wait in memory until 30 are
   queued, the oldest is 30 seconds old, or you call `flush()`. Call `flush()` before the process
@@ -359,11 +394,6 @@ are reported on stderr.
   contains a control character other than tab, for a `null` app name, and for an app version that
   is `null`, empty or whitespace only.
 - **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
-- **A custom `Inspector` that declared its own `void flush()` (or `flush(long)`) no longer
-  compiles**, because the interface now declares `boolean flush()` and `boolean flush(long)`.
-  Change it to return `boolean`: `true` when nothing is left buffered, waiting or in flight. That
-  means drained, not delivered: a send can have failed or events can have been dropped (both are
-  reported on stderr).
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
   element types separately as children, each distinct element schema once in first-occurrence
@@ -371,7 +401,7 @@ are reported on stderr.
   empty list is `list(string)`, except a primitive numeric array, which is typed by its component
   type even when empty: an empty `double[]` is `list(float)`. `AvoEventSchemaType`
   `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.x names.
-- **Track methods never return an empty result because of the HTTP response.** They return the
+- **`trackSchemaFromEvent` never returns an empty result because of the HTTP response.** It returns the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
   non-200. The returned map now keeps the input's property order.
 - **Internal errors throw in dev and are swallowed in staging and prod**, including `Error`s such
