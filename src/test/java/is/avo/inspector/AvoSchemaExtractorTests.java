@@ -165,6 +165,43 @@ public class AvoSchemaExtractorTests {
                         "zz", new boolean[]{true}, "cc", new char[]{'a'}));
     }
 
+    // Cross-SDK parity fixture F1 (typed arrays); its digest is pinned in ExpansionBudgetTests.
+    static Map<String, Object> typedArraysFixture() {
+        return props("d", new double[]{0.5, 1.5}, "f", new float[]{0.5f}, "e", new double[0],
+                "b", new byte[]{1, 2}, "i", new int[]{1, 2});
+    }
+
+    // Cross-SDK parity fixture F2 (list dedup); its digest is pinned in ExpansionBudgetTests.
+    static Map<String, Object> dedupFixture() {
+        return props(
+                "maps", Arrays.asList(props("a", 1, "b", "x"), props("b", "y", "a", 2), props("a", 3)),
+                "lists", Arrays.asList(Collections.singletonList(1), Collections.singletonList(2),
+                        Collections.singletonList("x"), Collections.singletonList(3)),
+                "bins", Arrays.asList(new byte[]{1}, new byte[]{2, 3}, new byte[0]),
+                "mixed", Arrays.asList(1, "x", 2, "y"));
+    }
+
+    @Test
+    public void typedArraysFixtureStructure() {
+        assertWire("[{propertyName:d,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:f,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:e,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:b,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:i,propertyType:'list(int)',children:[int]}]",
+                typedArraysFixture());
+    }
+
+    @Test
+    public void dedupFixtureStructure() {
+        assertWire("[{propertyName:maps,propertyType:'list(object)',children:["
+                        + "[{propertyName:a,propertyType:int},{propertyName:b,propertyType:string}],"
+                        + "[{propertyName:a,propertyType:int}]]},"
+                        + "{propertyName:lists,propertyType:'list(object)',children:[[int],[string]]},"
+                        + "{propertyName:bins,propertyType:'list(object)',children:[[int]]},"
+                        + "{propertyName:mixed,propertyType:'list(int)',children:[int,string]}]",
+                dedupFixture());
+    }
+
     @Test(timeout = 10_000)
     public void nearlyTenThousandObjectChildrenAreDeduplicatedInOnePass() {
         // One hash lookup per element, no pairwise comparison. 9,990 maps stay inside both budgets.

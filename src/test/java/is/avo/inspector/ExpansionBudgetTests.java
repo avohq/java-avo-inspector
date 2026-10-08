@@ -134,4 +134,17 @@ public class ExpansionBudgetTests {
         assertMatchesNode(listDag(6, 12), 386, "fa36cee2d9450d07e0b374330e796ce55b03dc8e37b44af34c902d60b0c787e5",
                 15, 3, 3);
     }
+
+    // Cross-SDK parity fixtures F1 (typed arrays) and F2 (list dedup); see AvoSchemaExtractorTests.
+    @Test
+    public void typedArraysFixtureMatchesTheOtherSdks() throws Exception {
+        assertMatchesNode(AvoSchemaExtractorTests.typedArraysFixture(), 123,
+                "bd4dcad1a3f78a8bf7d1ad8a88c878beb77c6c59b6c40abfb7f2706df3433985", 5, 0, 0);
+    }
+
+    @Test
+    public void dedupFixtureMatchesTheOtherSdks() throws Exception {
+        assertMatchesNode(AvoSchemaExtractorTests.dedupFixture(), 161,
+                "ea480ff92fa33427780e2b46510d84e80589d90fd4bf57baac2f8efa3c866422", 7, 0, 0);
+    }
 }
