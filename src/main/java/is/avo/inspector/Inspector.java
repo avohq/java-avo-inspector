@@ -65,8 +65,35 @@ public interface Inspector {
     Map<String, AvoEventSchemaType> extractSchema(@Nullable Object eventProperties);
 
     // The methods below were added in 2.0 as defaults, so implementations written against 1.x keep
-    // compiling. The defaults ignore streamId and options and delegate to the 1.x methods;
-    // AvoInspector implements them fully.
+    // compiling. The stream-id-only overloads pass null options to the GatewayOptions overloads;
+    // the others ignore streamId and options and delegate to the 1.x methods. AvoInspector
+    // implements the GatewayOptions overloads fully.
+
+    /**
+     * Tracks an event with a stream id and no gateway options: the same as passing {@code null}
+     * options to {@link #trackSchemaFromEvent(String, JSONObject, String, GatewayOptions)}.
+     *
+     * <p>A bare {@code null} third argument is ambiguous with the {@link AvoInspectorTarget}
+     * overload and does not compile; pass {@code (String) null}, or {@code ""}, for no stream id.
+     */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties,
+                                                               @Nullable String streamId) {
+        return trackSchemaFromEvent(eventName, eventProperties, streamId, (GatewayOptions) null);
+    }
+
+    /**
+     * Tracks an event with a stream id and no gateway options: the same as passing {@code null}
+     * options to {@link #trackSchemaFromEvent(String, Map, String, GatewayOptions)}.
+     *
+     * <p>A bare {@code null} third argument is ambiguous with the {@link AvoInspectorTarget}
+     * overload and does not compile; pass {@code (String) null}, or {@code ""}, for no stream id.
+     */
+    @NotNull
+    default Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties,
+                                                               @Nullable String streamId) {
+        return trackSchemaFromEvent(eventName, eventProperties, streamId, (GatewayOptions) null);
+    }
 
     /** Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1). */
     @NotNull

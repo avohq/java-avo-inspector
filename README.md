@@ -162,6 +162,10 @@ avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", GatewayOp
         .build());
 ```
 
+Without gateway options, pass the stream id alone:
+`trackSchemaFromEvent("Purchase", properties, "stream-id")`. A bare `null` stream id there does not
+compile, because it also matches the `AvoInspectorTarget` overload; write `(String) null`.
+
 Values are trimmed and blank values are ignored. When `originHint` is set without
 `originAppVersion`, the event is sent with a `null` app version (the instance's version belongs to
 a different source).
