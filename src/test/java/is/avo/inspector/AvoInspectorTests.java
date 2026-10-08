@@ -62,7 +62,7 @@ public class AvoInspectorTests {
             assertConstructorThrows(message, AvoInspectorOptions.builder().apiKey(key).appVersion("1.0.0").build());
         }
         // Other control characters get a message of their own; the spec message names CR, LF and NUL.
-        String other = "Avo Inspector: apiKey must not contain control characters";
+        String other = "[Avo Inspector] apiKey must not contain control characters";
         for (String key : new String[]{"key\u0001", "key\u000b", "key\u001b[31m", "key\u001f", "key\u007f",
                 "key\u0080", "key\u0085", "key\u009f"}) {
             assertConstructorThrows(other, AvoInspectorOptions.builder().apiKey(key).appVersion("1.0.0").build());
@@ -121,8 +121,8 @@ public class AvoInspectorTests {
         assertTargetThrows(noKey, " \u00a0", "App");
         assertTargetThrows(control, "bad\rkey", "App");
         assertTargetThrows(control, "\0", "App");
-        assertTargetThrows("Avo Inspector: apiKey must not contain control characters", "key\u0007", "App");
-        assertTargetThrows("Avo Inspector: apiKey must not contain control characters", "key\u0085", "App");
+        assertTargetThrows("[Avo Inspector] apiKey must not contain control characters", "key\u0007", "App");
+        assertTargetThrows("[Avo Inspector] apiKey must not contain control characters", "key\u0085", "App");
         assertTargetThrows("[Avo Inspector] No app name provided. AvoInspectorTarget requires an app name; use \"\" for none.", "key", null);
 
         new AvoInspectorTarget("key\twith-tab", "", "1.0.0");
@@ -181,14 +181,14 @@ public class AvoInspectorTests {
         props.put("alpha", "a");
         props.put("mid", 0.0);
 
-        Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEvent("Event", props);
+        Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(props).build());
 
         assertEquals(new ArrayList<>(props.keySet()), new ArrayList<>(schema.keySet()));
         assertEquals("float", schema.get("mid").toString());
 
         JSONObject json = new JSONObject();
         json.put("n", 1);
-        assertEquals("int", inspector.trackSchemaFromEvent("Event", json, "stream", null).get("n").toString());
+        assertEquals("int", inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(json).streamId("stream").build()).get("n").toString());
     }
 
     @Test
@@ -226,8 +226,8 @@ public class AvoInspectorTests {
     @Test
     public void errorsNeverEscapeTrackOutsideDev() {
         AvoInspector prod = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Prod));
-        assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new StackOverflowError())).isEmpty());
-        assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new NoClassDefFoundError("x")), "s", null).isEmpty());
+        assertTrue(prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(throwingMap(new StackOverflowError())).build()).isEmpty());
+        assertTrue(prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(throwingMap(new NoClassDefFoundError("x"))).streamId("s").build()).isEmpty());
         prod.trackSchema("Event", new java.util.AbstractMap<String, AvoEventSchemaType>() {
             @Override
             public java.util.Set<Entry<String, AvoEventSchemaType>> entrySet() {
@@ -241,7 +241,7 @@ public class AvoInspectorTests {
     public void errorsInDevBecomeTheDocumentedRuntimeException() {
         AvoInspector dev = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Dev));
         try {
-            dev.trackSchemaFromEvent("Event", throwingMap(new StackOverflowError()));
+            dev.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(throwingMap(new StackOverflowError())).build());
             fail("expected a rethrow in dev");
         } catch (RuntimeException e) {
             assertEquals("Avo Inspector: something went wrong. Please report to support@avo.app.", e.getMessage());
@@ -253,7 +253,7 @@ public class AvoInspectorTests {
     public void anInterruptInsideTheSdkKeepsTheInterruptFlag() {
         AvoInspector prod = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Prod));
         try {
-            assertTrue(prod.trackSchemaFromEvent("Event", throwingMap(new InterruptedException())).isEmpty());
+            assertTrue(prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(throwingMap(new InterruptedException())).build()).isEmpty());
             assertTrue(Thread.currentThread().isInterrupted());
         } finally {
             Thread.interrupted();
@@ -270,14 +270,14 @@ public class AvoInspectorTests {
             }
         };
         try {
-            inspector.trackSchemaFromEvent("Event", broken);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(broken).build());
             fail("expected a rethrow in dev");
         } catch (RuntimeException e) {
             assertEquals("Avo Inspector: something went wrong. Please report to support@avo.app.", e.getMessage());
         }
 
         AvoInspector prod = track(new AvoInspector("key", "1.0.0", "App", AvoInspectorEnv.Prod));
-        assertTrue(prod.trackSchemaFromEvent("Event", broken).isEmpty());
+        assertTrue(prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(broken).build()).isEmpty());
     }
 
     @Test

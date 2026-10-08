@@ -50,6 +50,11 @@ class AvoBatcher {
     static final int MAX_WAITING_EVENTS = 10_000;
     // Test-only: a smaller allowance.
     static volatile int maxWaitingEvents = MAX_WAITING_EVENTS;
+    // With blockWhenBacklogged, a track call that leaves this many events waiting for a send slot
+    // waits until fewer are waiting, at most backlogWaitMs per call.
+    static final int BACKLOG_BLOCK_EVENTS = 1_000;
+    // Test-only: a shorter wait.
+    static volatile long backlogWaitMs = AvoNetworkCallsHandler.TIMEOUT_MS;
     private static final ThreadPoolExecutor sharedSendPool = newSharedSendPool();
     // Test-only replacement for the shared pool (e.g. one that fails to start a thread).
     @Nullable static volatile java.util.concurrent.Executor sendExecutorForTesting;
@@ -76,6 +81,7 @@ class AvoBatcher {
     private final int batchSize;
     private final int maxQueueSize;
     private final long flushMillis;
+    private final boolean blockWhenBacklogged;
 
     private final Object lock = new Object();
     // Guarded by lock: one buffer per (apiKey, appName), so each target's batches fill to
@@ -108,7 +114,13 @@ class AvoBatcher {
             Collections.newSetFromMap(new ConcurrentHashMap<Future<AvoNetworkCallsHandler.SendResult>, Boolean>());
 
     AvoBatcher(@NotNull Sender sender, int batchSize, double batchFlushSeconds, int maxQueueSize, boolean disableBatchTimer) {
+        this(sender, batchSize, batchFlushSeconds, maxQueueSize, disableBatchTimer, false);
+    }
+
+    AvoBatcher(@NotNull Sender sender, int batchSize, double batchFlushSeconds, int maxQueueSize, boolean disableBatchTimer,
+               boolean blockWhenBacklogged) {
         this.sender = sender;
+        this.blockWhenBacklogged = blockWhenBacklogged;
         this.batchSize = batchSize;
         this.maxQueueSize = maxQueueSize;
         this.flushMillis = Math.max(1L, (long) (batchFlushSeconds * 1000.0));
@@ -234,7 +246,73 @@ class AvoBatcher {
         for (AvoBatcher batcher : batchers) {
             batcher.awaitInFlight(deadline);
         }
+        // The JVM exits after this: report what the deadline left behind, including batchers that
+        // became busy during the drain.
+        Set<AvoBatcher> all = Collections.newSetFromMap(new IdentityHashMap<AvoBatcher, Boolean>());
+        all.addAll(batchers);
+        synchronized (busyBatchers) {
+            all.addAll(busyBatchers);
+        }
+        long unsent = 0;
+        long unconfirmed = 0;
+        List<SendTask> givenUp = new ArrayList<>();
+        for (AvoBatcher batcher : all) {
+            long[] left = batcher.leftBehind(givenUp);
+            unsent += left[0];
+            unconfirmed += left[1];
+        }
+        // Counted as unsent: they must not start afterwards.
+        for (SendTask send : givenUp) {
+            send.cancel(false);
+        }
+        if (unsent > 0) {
+            AvoLog.dropped(unsent, AvoLog.UNSENT_AT_EXIT);
+        }
+        if (unconfirmed > 0) {
+            AvoLog.dropped(unconfirmed, AvoLog.UNCONFIRMED_AT_EXIT);
+        }
         AvoLog.flushPending(false);
+    }
+
+    // Claims every unfinished send for the exit report, so each event is reported once: events
+    // still buffered, or in sends not yet started (waiting for a slot or queued in the pool), are
+    // unsent, and those sends are added to givenUp; events in started sends whose outcome has not
+    // been reported are unconfirmed. A send that has reported its outcome (logged a failure or
+    // rejection, or completed) is not counted.
+    private long[] leftBehind(List<SendTask> givenUp) {
+        long unsent;
+        synchronized (lock) {
+            unsent = destroyed ? 0 : totalBuffered;
+        }
+        long unconfirmed = 0;
+        synchronized (sendQueueLock) {
+            for (Future<AvoNetworkCallsHandler.SendResult> future : new ArrayList<>(inFlight)) {
+                SendTask send = (SendTask) future;
+                if (send.isDone()) {
+                    continue;
+                }
+                if (send.state.compareAndSet(SendTask.QUEUED, SendTask.COUNTED_AT_EXIT)) {
+                    unsent += send.eventCount;
+                    givenUp.add(send);
+                } else if (send.state.compareAndSet(SendTask.STARTED, SendTask.COUNTED_AT_EXIT)) {
+                    unconfirmed += send.eventCount;
+                }
+            }
+        }
+        return new long[]{unsent, unconfirmed};
+    }
+
+    // The send this thread is running, if any.
+    private static final ThreadLocal<SendTask> currentSend = new ThreadLocal<>();
+
+    /**
+     * Claims the outcome of the send this thread is running before it is logged, and once it
+     * completes: false if the exit report has already counted the send as unconfirmed, so its
+     * outcome must not be reported too. Always true outside a send.
+     */
+    static boolean claimCurrentSend() {
+        SendTask send = currentSend.get();
+        return send == null || send.claimOutcome();
     }
 
     /**
@@ -280,6 +358,7 @@ class AvoBatcher {
             }
         }
 
+        List<Future<AvoNetworkCallsHandler.SendResult>> dispatched;
         try {
             if (dropped > 0) {
                 AvoLog.dropped(dropped, AvoLog.QUEUE_FULL);
@@ -288,10 +367,35 @@ class AvoBatcher {
             if (!sends.isEmpty() && afterSwap != null) {
                 afterSwap.run();
             }
-            return !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
+            dispatched = !sends.isEmpty() ? submit(sends) : Collections.<Future<AvoNetworkCallsHandler.SendResult>>emptyList();
         } catch (Throwable e) {
             abandon(sends, e);
             return Collections.emptyList();
+        }
+        if (blockWhenBacklogged) {
+            awaitBacklogBelowThreshold();
+        }
+        return dispatched;
+    }
+
+    // blockWhenBacklogged: waits while BACKLOG_BLOCK_EVENTS or more events wait for a send slot,
+    // at most backlogWaitMs. destroy() empties the backlog, which ends the wait; an interrupt ends
+    // it with the flag restored.
+    private void awaitBacklogBelowThreshold() {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(backlogWaitMs);
+        synchronized (sendQueueLock) {
+            while (queuedEvents >= BACKLOG_BLOCK_EVENTS) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(sendQueueLock, remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
     }
 
@@ -307,6 +411,7 @@ class AvoBatcher {
                         queuedEvents -= send.eventCount;
                     }
                 }
+                sendQueueLock.notifyAll();
             }
             for (SendTask send : sends) {
                 // cancel() runs done(): the in-flight entry and the shutdown registration go.
@@ -324,12 +429,33 @@ class AvoBatcher {
         }
     }
 
-    /** Sends everything buffered, then waits for every in-flight send or the timeout. Never throws. */
-    void flush(long timeoutMs) {
+    /**
+     * Sends everything buffered, then waits for every in-flight send or the timeout. Returns whether
+     * nothing is left buffered, waiting or in flight. Never throws.
+     */
+    boolean flush(long timeoutMs) {
         if (!sendBuffered()) {
-            return;
+            return true;
         }
         awaitInFlight(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs)));
+        return isDrained();
+    }
+
+    // A completed send counts as finished even before its done() has taken it out of inFlight.
+    // Both checks run under lock: prepare() moves a batch from the buffer into inFlight under the
+    // same lock, so together they see one consistent moment.
+    private boolean isDrained() {
+        synchronized (lock) {
+            if (!destroyed && totalBuffered > 0) {
+                return false;
+            }
+            for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
+                if (!send.isDone()) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     // Returns false once destroyed.
@@ -386,6 +512,8 @@ class AvoBatcher {
         synchronized (sendQueueLock) {
             waiting.clear();
             queuedEvents = 0;
+            // Releases track calls waiting for the backlog to shrink.
+            sendQueueLock.notifyAll();
         }
         for (Future<AvoNetworkCallsHandler.SendResult> send : new ArrayList<>(inFlight)) {
             send.cancel(true);
@@ -579,6 +707,7 @@ class AvoBatcher {
                 next = waiting.pollFirst();
                 queuedEvents -= next.eventCount;
                 running++;
+                sendQueueLock.notifyAll();
             }
             try {
                 java.util.concurrent.Executor override = sendExecutorForTesting;
@@ -605,7 +734,15 @@ class AvoBatcher {
         @Override
         public void run() {
             try {
-                send.run();
+                // Not started if the exit report already counted it as unsent.
+                if (send.state.compareAndSet(SendTask.QUEUED, SendTask.STARTED)) {
+                    currentSend.set(send);
+                    try {
+                        send.run();
+                    } finally {
+                        currentSend.remove();
+                    }
+                }
             } finally {
                 synchronized (sendQueueLock) {
                     running--;
@@ -632,7 +769,9 @@ class AvoBatcher {
         @Override
         public AvoNetworkCallsHandler.SendResult call() {
             try {
-                return sender.send(events, apiKey);
+                AvoNetworkCallsHandler.SendResult result = sender.send(events, apiKey);
+                claimCurrentSend();
+                return result;
             } catch (Throwable e) {
                 Util.restoreInterrupt(e);
                 AvoLog.dropped(events.size(), AvoLog.INTERNAL_ERROR);
@@ -643,14 +782,26 @@ class AvoBatcher {
     }
 
     private final class SendTask extends FutureTask<AvoNetworkCallsHandler.SendResult> {
+        static final int QUEUED = 0;
+        static final int STARTED = 1;
+        static final int OUTCOME_CLAIMED = 2;
+        static final int COUNTED_AT_EXIT = 3;
+
         // Guarded by sendQueueLock while the send waits; fixed once it starts.
         private final List<Map<String, Object>> events;
         int eventCount;
+        // QUEUED until a send thread starts it; then either the send claims its outcome or the
+        // exit report counts it, whichever comes first.
+        final AtomicInteger state = new AtomicInteger(QUEUED);
 
         SendTask(String apiKey, List<Map<String, Object>> events) {
             super(new SendCall(apiKey, events));
             this.events = events;
             this.eventCount = events.size();
+        }
+
+        boolean claimOutcome() {
+            return state.compareAndSet(STARTED, OUTCOME_CLAIMED) || state.get() == OUTCOME_CLAIMED;
         }
 
         // Caller holds sendQueueLock and the send has not started. Returns how many were dropped.
@@ -732,6 +883,7 @@ class AvoBatcher {
                 AvoNetworkCallsHandler.class, AvoNetworkCallsHandler.SendResult.class, AvoNetworkCallsHandler.Disconnect.class,
                 Util.class, AvoInspector.class,
                 org.json.JSONObject.class, org.json.JSONArray.class, org.json.JSONString.class, org.json.JSONException.class,
+                org.json.JSONTokener.class,
         };
         for (Class<?> type : used) {
             try {
@@ -739,6 +891,22 @@ class AvoBatcher {
             } catch (Throwable ignored) {
                 // Best effort.
             }
+        }
+        // org.json loads more classes as its code runs (the parser, JSONObject.NULL, number and
+        // string writers), so run what a send does once: serialise an event and parse a response.
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("string", "a\"\u00e9\n");
+            event.put("number", 0.5);
+            event.put("integer", 1);
+            event.put("boolean", true);
+            event.put("null", org.json.JSONObject.NULL);
+            event.put("array", new org.json.JSONArray().put(1).put(new org.json.JSONObject().put("key", "value")));
+            String body = new org.json.JSONArray().put(new org.json.JSONObject(event)).toString();
+            new org.json.JSONArray(body);
+            new org.json.JSONObject("{\"samplingRate\":1.0,\"other\":[null,true,-1e3,\"x\"]}").opt("samplingRate");
+        } catch (Throwable ignored) {
+            // Best effort.
         }
     }
 }

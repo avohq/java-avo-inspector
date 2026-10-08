@@ -44,9 +44,18 @@ class MockInspectorServer implements AutoCloseable {
     private volatile String responseBody = "{\"samplingRate\":1.0}";
     private volatile long responseDelayMs = 0;
     private volatile String location;
+    private volatile java.util.concurrent.CountDownLatch hold;
 
     MockInspectorServer() throws IOException {
+        this(false);
+    }
+
+    // concurrent: answers requests in parallel, as the real API does, instead of one at a time.
+    MockInspectorServer(boolean concurrent) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        if (concurrent) {
+            server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        }
         server.createContext("/", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {
@@ -73,6 +82,18 @@ class MockInspectorServer implements AutoCloseable {
 
     void delayResponses(long millis) {
         this.responseDelayMs = millis;
+    }
+
+    // Requests are recorded at once but answered only after releaseResponses().
+    void holdResponses() {
+        hold = new java.util.concurrent.CountDownLatch(1);
+    }
+
+    void releaseResponses() {
+        java.util.concurrent.CountDownLatch current = hold;
+        if (current != null) {
+            current.countDown();
+        }
     }
 
     List<Request> requests() {
@@ -104,6 +125,14 @@ class MockInspectorServer implements AutoCloseable {
         synchronized (requests) {
             requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getPath(), headers, raw, body));
         }
+        java.util.concurrent.CountDownLatch current = hold;
+        if (current != null) {
+            try {
+                current.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         if (responseDelayMs > 0) {
             try {
                 Thread.sleep(responseDelayMs);
@@ -134,6 +163,7 @@ class MockInspectorServer implements AutoCloseable {
 
     @Override
     public void close() {
+        releaseResponses();
         server.stop(0);
     }
 }

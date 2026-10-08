@@ -14,8 +14,8 @@ import java.util.Map;
 import static org.junit.Assert.assertEquals;
 
 // A per-call expansion budget, as in Node: shared references that are not cycles would otherwise
-// expand exponentially. The expected digests are Node's (dist/AvoSchemaParser.js) output for the
-// same inputs, reduced with the same canonical form.
+// expand exponentially; and a per-call budget of 10,000 property entries (MAX_PROPERTIES). The
+// digests are of the canonical form below, compared across the SDKs for the same inputs.
 public class ExpansionBudgetTests {
 
     private static Map<String, Object> mapsDag(int fan, int depth) {
@@ -97,15 +97,54 @@ public class ExpansionBudgetTests {
         assertEquals(sha256, hex.toString());
     }
 
+    // 40,000 entries under the expansion budget alone; the property budget keeps the first 10,000.
     @Test(timeout = 10_000)
-    public void mapFanOutFourIsCutByTheBudgetLikeNode() throws Exception {
-        assertMatchesNode(mapsDag(4, 12), 590002, "3c1ab356addf62e89ce1618b32dfdae9303eda1fe2276e14ab3ca785d563e0a5",
-                40000, 30001, 0);
+    public void mapFanOutFourIsCutByBothBudgets() throws Exception {
+        assertMatchesNode(mapsDag(4, 12), 147496, "5012bc5b9543195e969f2b10956402ef0306e92a009f409194dffd8bd46083ed",
+                10000, 7495, 0);
+    }
+
+    private static Map<String, Object> flat(int keys) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < keys; i++) {
+            map.put("key" + i, i);
+        }
+        return map;
+    }
+
+    @Test(timeout = 10_000)
+    public void aMillionKeyMapKeepsItsFirstTenThousandProperties() throws Exception {
+        assertMatchesNode(flat(1_000_000), 138891, "9652d270cd6568d00b73032b56b73782771f634703c89f7fa81df852ae50c835",
+                10000, 0, 0);
+    }
+
+    @Test(timeout = 10_000)
+    public void nestedWideMapsShareThePropertyBudget() throws Exception {
+        Map<String, Object> nested = new LinkedHashMap<>();
+        for (String key : new String[]{"a", "b", "c", "d", "e"}) {
+            nested.put(key, flat(5_000));
+        }
+        assertMatchesNode(nested, 137779, "73549e68066367f3e976a97b299df3bb972e80fe65b487f89b7d7f251397984d",
+                10000, 0, 0);
     }
 
     @Test(timeout = 10_000)
     public void listFanOutSixIsCutByTheBudgetLikeNode() throws Exception {
-        assertMatchesNode(listDag(6, 12), 178576, "3dc637ef3e554a0e1aecec9dcec0933e51c94b66f6064e7be996f1ee8c1a5670",
-                8570, 7140, 3);
+        // Equal list children are kept once, so only the subtrees the budget cut differ.
+        assertMatchesNode(listDag(6, 12), 386, "fa36cee2d9450d07e0b374330e796ce55b03dc8e37b44af34c902d60b0c787e5",
+                15, 3, 3);
+    }
+
+    // Cross-SDK parity fixtures F1 (typed arrays) and F2 (list dedup); see AvoSchemaExtractorTests.
+    @Test
+    public void typedArraysFixtureMatchesTheOtherSdks() throws Exception {
+        assertMatchesNode(AvoSchemaExtractorTests.typedArraysFixture(), 123,
+                "bd4dcad1a3f78a8bf7d1ad8a88c878beb77c6c59b6c40abfb7f2706df3433985", 5, 0, 0);
+    }
+
+    @Test
+    public void dedupFixtureMatchesTheOtherSdks() throws Exception {
+        assertMatchesNode(AvoSchemaExtractorTests.dedupFixture(), 161,
+                "ea480ff92fa33427780e2b46510d84e80589d90fd4bf57baac2f8efa3c866422", 7, 0, 0);
     }
 }

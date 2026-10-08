@@ -32,12 +32,26 @@ public class AvoSchemaExtractor {
 	// cycles could otherwise expand exponentially; past the budget a complex value is reported as
 	// "object", like the depth cap.
 	static final int MAX_EXPANSIONS = 10_000;
+	// Property entries emitted per extractSchema call, at every depth and in iteration order (the
+	// cross-SDK extraction bound): a map with a million keys would otherwise produce a body of tens
+	// of megabytes. Entries past it are omitted. Independent of MAX_EXPANSIONS.
+	static final int MAX_PROPERTIES = 10_000;
 
 	// The state of one extractSchema call: the containers on the path to the current value (by
-	// identity) and the complex values expanded so far.
+	// identity), the complex values expanded so far and the property entries emitted so far.
 	private static final class Walk {
 		final Set<Object> ancestors = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
 		int expansions;
+		int properties;
+
+		// Counts one property entry; false once the budget is spent, so the entry is omitted.
+		boolean takeProperty() {
+			if (properties >= MAX_PROPERTIES) {
+				return false;
+			}
+			properties++;
+			return true;
+		}
 
 		Walk(Object root) {
 			ancestors.add(root);
@@ -78,6 +92,9 @@ public class AvoSchemaExtractor {
 
 		Walk walk = new Walk(eventProperties);
 		for (Field eventPropertyField: eventPropertiesFields) {
+			if (!walk.takeProperty()) {
+				break;
+			}
 			AvoEventSchemaType propertyType = getAvoSchemaType(eventProperties, eventPropertyField, walk);
 			result.put(eventPropertyField.getName(), propertyType);
 		}
@@ -92,18 +109,22 @@ public class AvoSchemaExtractor {
 		}
 	}
 
-	// The object branch of mapping(): one entry per own property, in iteration order.
+	// The object branch of mapping(): one entry per own property, in iteration order. Each entry is
+	// counted before its value is mapped, so a parent precedes its children in the budget.
 	private Map<String, AvoEventSchemaType> mapObject(@NotNull Object object, int depth, Walk walk) {
 		Map<String, AvoEventSchemaType> result = new LinkedHashMap<>();
 
 		if (object instanceof JSONObject) {
 			JSONObject json = (JSONObject) object;
-			for (Iterator<String> it = json.keys(); it.hasNext(); ) {
+			for (Iterator<String> it = json.keys(); it.hasNext() && walk.takeProperty(); ) {
 				String key = it.next();
 				result.put(key, objectToAvoType(json.opt(key), depth, walk));
 			}
 		} else {
 			for (Map.Entry<?, ?> entry : ((Map<?, ?>) object).entrySet()) {
+				if (!walk.takeProperty()) {
+					break;
+				}
 				result.put(String.valueOf(entry.getKey()), objectToAvoType(entry.getValue(), depth, walk));
 			}
 		}
@@ -196,13 +217,15 @@ public class AvoSchemaExtractor {
 	}
 
 	// The array branch of mapping(), in one pass over the elements: the list type comes from the
-	// first element, each element is mapped, primitive types are deduplicated by value. Objects and
-	// nested lists are never merged (reference identity in the JS reference parser).
+	// first element, each element is mapped, and children keep each distinct schema once, in
+	// first-occurrence order. Objects are compared by value regardless of property order, nested
+	// lists in order (AvoEventSchemaType.childKey(), one hash lookup per element).
 	private AvoEventSchemaType.AvoList mapList(@NotNull Object list, int depth, Walk walk) {
 		Class<?> component = list.getClass().getComponentType();
 		if (component != null && component.isPrimitive()) {
-			// Every element has the component's type, so there is nothing to walk or box.
-			if (Array.getLength(list) == 0) {
+			// Every element has the component's type, so there is nothing to walk or box. A numeric
+			// array is typed by its component even when empty; an empty boolean[] or char[] is not.
+			if (Array.getLength(list) == 0 && (component == boolean.class || component == char.class)) {
 				return new AvoEventSchemaType.AvoList("string", new ArrayList<AvoEventSchemaType>());
 			}
 			AvoEventSchemaType type = primitiveType(component);
@@ -215,7 +238,7 @@ public class AvoSchemaExtractor {
 		String elementType = "string";
 		boolean first = true;
 		List<AvoEventSchemaType> children = new ArrayList<>();
-		Set<String> seenPrimitives = new HashSet<>();
+		Set<String> seenChildren = new HashSet<>();
 		// The 1.1.1 union (toString/equals) dedups by 1.1.1 name, which can differ from the wire
 		// name: BigInteger is "int" on the wire but was "unknown".
 		List<AvoEventSchemaType> legacyElements = new ArrayList<>();
@@ -229,7 +252,7 @@ public class AvoSchemaExtractor {
 			AvoEventSchemaType mapped = objectToAvoType(element, depth, walk);
 			boolean nonPrimitive = (mapped instanceof AvoEventSchemaType.AvoObject && !(mapped instanceof AvoEventSchemaType.AvoTruncatedObject))
 					|| mapped instanceof AvoEventSchemaType.AvoList;
-			if (nonPrimitive || seenPrimitives.add(mapped.getReportedName())) {
+			if (seenChildren.add(mapped.childKey())) {
 				children.add(mapped);
 			}
 			if (nonPrimitive || seenLegacyPrimitives.add(mapped.legacyName())) {

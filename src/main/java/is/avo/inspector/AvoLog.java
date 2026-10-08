@@ -21,6 +21,10 @@ final class AvoLog {
     static final String QUEUE_FULL = "queue full";
     static final String SEND_BACKLOG_FULL = "send backlog full";
     static final String INTERNAL_ERROR = "internal error";
+    // Still buffered or waiting for a send slot when the shutdown drain gave up.
+    static final String UNSENT_AT_EXIT = "unsent at exit";
+    // In a send that had not completed when the shutdown drain gave up.
+    static final String UNCONFIRMED_AT_EXIT = "unconfirmed at exit";
 
     interface Clock {
         long nanoTime();
@@ -35,7 +39,10 @@ final class AvoLog {
     private AvoLog() {
     }
 
-    /** Events dropped because the unsent buffer or the send backlog is full, or to an internal error. */
+    /**
+     * Events dropped because the unsent buffer or the send backlog is full, to an internal error,
+     * or left behind by the shutdown drain.
+     */
     static void dropped(long count, String reason) {
         report("dropped:" + reason, count, new Dropped(reason));
     }
@@ -62,6 +69,12 @@ final class AvoLog {
     /** A streamId containing ':' (warned on every call before; now once per window). */
     static void streamIdColon() {
         report("streamid-colon", 1, new More("Avo Inspector: streamId contains ':'; using the value verbatim.", ""));
+    }
+
+    /** A null event passed to trackSchemaFromEvent: nothing is sent. */
+    static void nullEvent() {
+        report("null-event", 1, new More("Avo Inspector: trackSchemaFromEvent takes one InspectorEvent since 2.0.0, "
+                + "built with InspectorEvent.builder(); it was given null, so nothing was sent.", ""));
     }
 
     /** An event tracked with a null, empty or whitespace-only name, sent under the placeholder. */
@@ -103,6 +116,10 @@ final class AvoLog {
     // first one after the window prints itself together with what the previous window counted,
     // over the time since that window's first occurrence.
     private static void report(String key, long amount, Line line) {
+        // A send the exit report already counted as unconfirmed reports nothing more.
+        if (!AvoBatcher.claimCurrentSend()) {
+            return;
+        }
         String print;
         long now = now();
         synchronized (windows) {

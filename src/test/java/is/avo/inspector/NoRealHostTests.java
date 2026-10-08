@@ -39,7 +39,7 @@ public class NoRealHostTests {
         try {
             String endpoint = prod.networkCallsHandler.endpoint();
             assertEquals("prod send would go to " + endpoint, NoRealHostListener.DEAD_ENDPOINT, endpoint);
-            prod.trackSchemaFromEvent("Guarded", Collections.<String, Object>singletonMap("a", 1));
+            prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Guarded").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
             prod.flush();
         } finally {
             System.setErr(originalErr);

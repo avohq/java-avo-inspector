@@ -191,6 +191,7 @@ public class HarnessTests {
                 {"{\"action\":\"trackN\",\"count\":1,\"eventNamePrefix\":7}", "trackN eventNamePrefix must be a string"},
                 {"{\"action\":\"trackN\",\"count\":1,\"streamId\":7}", "trackN streamId must be a string"},
                 {"{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{},\"options\":\"x\"}", "options must be an object"},
+                {"{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":[1]}", "eventProperties must be an object"},
         };
         for (String[] c : cases) {
             int[] exitCode = new int[1];
@@ -198,6 +199,46 @@ public class HarnessTests {
 
             assertEquals(c[1], 2, exitCode[0]);
             assertEquals(c[1], new JSONObject(output).getString("error"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void aFlushStepReportsWhetherTheInstanceDrained() throws Exception {
+        // flush(0) starts the buffered send and returns before it completes: not drained.
+        try (MockInspectorServer server = new MockInspectorServer()) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"drained\",\"operation\":\"sequence\","
+                    + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"staging\",\"version\":\"1.0.0\",\"disableBatchTimer\":true},"
+                    + "\"steps\":[{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{}},"
+                    + "{\"action\":\"flush\",\"timeoutMs\":0},{\"action\":\"flush\"},{\"action\":\"destroy\"}]}",
+                    exitCode, server.url());
+
+            assertEquals(output, 0, exitCode[0]);
+            org.json.JSONArray records = new JSONObject(output).getJSONArray("actual");
+            assertEquals(false, records.getJSONObject(1).get("value"));
+            assertEquals(true, records.getJSONObject(2).get("value"));
+            assertEquals(JSONObject.NULL, records.getJSONObject(3).get("value"));
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void unknownFieldsInTheEnvelopeStepsAndMockResponseAreIgnored() throws Exception {
+        try (MockInspectorServer server = new MockInspectorServer()) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"extra\",\"operation\":\"sequence\","
+                    + "\"futureField\":{\"x\":1},\"notes\":\"n\","
+                    + "\"mock_response\":{\"status\":200,\"body\":{\"samplingRate\":1.0},\"delayMs\":5,\"headers\":{}},"
+                    + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"staging\",\"version\":\"1.0.0\",\"disableBatchTimer\":true},"
+                    + "\"steps\":[{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{\"a\":1},\"comment\":\"c\"},"
+                    + "{\"action\":\"flush\",\"label\":7}]}",
+                    exitCode, server.url());
+
+            assertEquals(output, 0, exitCode[0]);
+            JSONObject result = new JSONObject(output);
+            assertTrue(result.getBoolean("passed"));
+            assertEquals("track", result.getJSONArray("actual").getJSONObject(0).getString("action"));
+            assertEquals(true, result.getJSONArray("actual").getJSONObject(1).get("value"));
+            assertEquals(1, server.requests().size());
         }
     }
 
