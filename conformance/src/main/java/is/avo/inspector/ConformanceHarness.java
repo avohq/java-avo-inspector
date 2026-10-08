@@ -152,12 +152,9 @@ public final class ConformanceHarness {
                         if (timeoutMs != null && !(timeoutMs instanceof Long)) {
                             return configError(fixtureId, "flush timeoutMs must be an integer");
                         }
-                        if (timeoutMs != null) {
-                            inspector.flush((Long) timeoutMs);
-                        } else {
-                            inspector.flush();
-                        }
-                        records.put(record("flush", "resolve", null));
+                        // The value is whether the instance drained, as flush() reports it.
+                        boolean drained = timeoutMs != null ? inspector.flush((Long) timeoutMs) : inspector.flush();
+                        records.put(record("flush", "resolve", drained));
                     } else if ("destroy".equals(action)) {
                         inspector.destroy();
                         records.put(record("destroy", "resolve", null));

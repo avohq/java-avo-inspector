@@ -202,6 +202,25 @@ public class HarnessTests {
     }
 
     @Test(timeout = 60_000)
+    public void aFlushStepReportsWhetherTheInstanceDrained() throws Exception {
+        // flush(0) starts the buffered send and returns before it completes: not drained.
+        try (MockInspectorServer server = new MockInspectorServer()) {
+            int[] exitCode = new int[1];
+            String output = runHarness("{\"suite\":\"batching\",\"fixture_id\":\"drained\",\"operation\":\"sequence\","
+                    + "\"constructor\":{\"apiKey\":\"k\",\"env\":\"staging\",\"version\":\"1.0.0\",\"disableBatchTimer\":true},"
+                    + "\"steps\":[{\"action\":\"track\",\"eventName\":\"E\",\"eventProperties\":{}},"
+                    + "{\"action\":\"flush\",\"timeoutMs\":0},{\"action\":\"flush\"},{\"action\":\"destroy\"}]}",
+                    exitCode, server.url());
+
+            assertEquals(output, 0, exitCode[0]);
+            org.json.JSONArray records = new JSONObject(output).getJSONArray("actual");
+            assertEquals(false, records.getJSONObject(1).get("value"));
+            assertEquals(true, records.getJSONObject(2).get("value"));
+            assertEquals(JSONObject.NULL, records.getJSONObject(3).get("value"));
+        }
+    }
+
+    @Test(timeout = 60_000)
     public void trackNMakesEveryCallWhenCountExceedsTheWorkerPool() throws Exception {
         // Well above the harness's pool of 64 workers.
         int count = 500;
