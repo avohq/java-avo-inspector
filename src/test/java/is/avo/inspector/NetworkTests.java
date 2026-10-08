@@ -309,9 +309,14 @@ public class NetworkTests {
 
     @Test(timeout = 10_000)
     public void aTwoHundredCutOffMidBodyStillCountsAsDeliveredAndKeepsTheRate() throws Exception {
-        // The status decides. The part that arrives is itself a valid body, so reading it as one
-        // would change the rate.
-        final String partial = "{\"samplingRate\":0.1}";
+        // The status decides. What arrives may itself parse ({"samplingRate":0} would stop all
+        // sending), may not parse, or may be nothing at all; Content-Length promises 100 bytes.
+        for (String partial : new String[]{"{\"samplingRate\":0}", "{\"samplingRate\":0.1", ""}) {
+            assertCutOffTwoHundredKeepsTheRate(partial);
+        }
+    }
+
+    private void assertCutOffTwoHundredKeepsTheRate(final String partial) throws Exception {
         try (final ServerSocket socket = new ServerSocket(0)) {
             final java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
             Thread responder = new Thread(new Runnable() {
@@ -342,10 +347,10 @@ public class NetworkTests {
             AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("staging");
             handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
             handler.samplingRate = 0.5;
-            assertEquals(AvoNetworkCallsHandler.SendResult.OK, handler.send(eventWithPadding(1), "test-key"));
-            assertEquals(0.5, handler.samplingRate, 0.0);
+            assertEquals(partial, AvoNetworkCallsHandler.SendResult.OK, handler.send(eventWithPadding(1), "test-key"));
+            assertEquals(partial, 0.5, handler.samplingRate, 0.0);
             responder.join();
-            assertTrue(answered.get());
+            assertTrue(partial, answered.get());
         }
     }
 
