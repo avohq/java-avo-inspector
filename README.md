@@ -350,7 +350,10 @@ are reported on stderr.
   reported on stderr).
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
-  element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
+  element types separately as children, each distinct element schema once in first-occurrence
+  order (maps with the same properties and types are one child, whatever their key order). An
+  empty list is `list(string)`, except a primitive numeric array, which is typed by its component
+  type even when empty: an empty `double[]` is `list(float)`. `AvoEventSchemaType`
   `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.x names.
 - **Track methods never return an empty result because of the HTTP response.** They return the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
