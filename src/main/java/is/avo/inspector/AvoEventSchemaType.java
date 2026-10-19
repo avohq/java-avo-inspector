@@ -3,7 +3,10 @@ package is.avo.inspector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,23 @@ public abstract class AvoEventSchemaType {
     @NotNull
     Object toListChild() {
         return getReportedName();
+    }
+
+    // toListChild() in a canonical form, with object properties sorted by name: two list children
+    // are the same schema when their keys are equal. Computed once, after the type is built.
+    @Nullable private String childKey;
+
+    @NotNull
+    final String childKey() {
+        if (childKey == null) {
+            childKey = computeChildKey();
+        }
+        return childKey;
+    }
+
+    @NotNull
+    String computeChildKey() {
+        return JSONObject.quote(getReportedName());
     }
 
     /** The type as the dev log prints it: the wire type, with the children of objects and lists. */
@@ -124,7 +144,7 @@ public abstract class AvoEventSchemaType {
     public static class AvoList extends AvoEventSchemaType {
         // Basic type of the first element, "string" for an empty list (SPEC.md §9.2).
         @NotNull final String elementType;
-        // Mapped elements in order, primitive types deduplicated (SPEC.md §9.3.3).
+        // Mapped elements in first-occurrence order, each distinct schema once (by childKey()).
         @NotNull final List<AvoEventSchemaType> children;
 
         // The elements behind the 1.1.1 name, deduplicated by 1.1.1 name.
@@ -160,6 +180,16 @@ public abstract class AvoEventSchemaType {
         @Override
         Object toListChild() {
             return childrenToWire();
+        }
+
+        @NotNull
+        @Override
+        String computeChildKey() {
+            StringBuilder key = new StringBuilder("[");
+            for (int i = 0; i < children.size(); i++) {
+                key.append(i == 0 ? "" : ",").append(children.get(i).childKey());
+            }
+            return key.append(']').toString();
         }
 
         @NotNull
@@ -224,6 +254,36 @@ public abstract class AvoEventSchemaType {
 
         @NotNull
         @Override
+        String computeChildKey() {
+            return propertiesKey(children);
+        }
+
+        // The wire properties array (Util.remapProperties) with the entries sorted by name.
+        @NotNull
+        static String propertiesKey(@NotNull Map<String, AvoEventSchemaType> properties) {
+            List<String> names = new ArrayList<>(properties.keySet());
+            Collections.sort(names);
+            StringBuilder key = new StringBuilder("[");
+            for (String name : names) {
+                AvoEventSchemaType value = properties.get(name);
+                if (value == null) {
+                    continue;
+                }
+                key.append(key.length() == 1 ? "" : ",")
+                        .append('{').append(JSONObject.quote(name)).append('|').append(JSONObject.quote(value.getReportedName()));
+                if (value instanceof AvoTruncatedObject) {
+                    // As a property it is an object with no properties, not the type string.
+                    key.append("|[]");
+                } else if (value instanceof AvoObject || value instanceof AvoList) {
+                    key.append('|').append(value.childKey());
+                }
+                key.append('}');
+            }
+            return key.append(']').toString();
+        }
+
+        @NotNull
+        @Override
         protected String getReadableName() {
             return Util.readableJsonProperties(children);
         }
@@ -248,6 +308,12 @@ public abstract class AvoEventSchemaType {
         @Override
         Object toListChild() {
             return getReportedName();
+        }
+
+        @NotNull
+        @Override
+        String computeChildKey() {
+            return JSONObject.quote(getReportedName());
         }
     }
 

@@ -80,6 +80,7 @@ AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
         .batchFlushSeconds(30)        // optional, default 30
         .maxQueueSize(1000)           // optional, default 1000
         .disableBatchTimer(false)     // optional, default false; set true in serverless
+        .blockWhenBacklogged(false)   // optional, default false; set true in backfill and batch jobs
         .build());
 ```
 
@@ -100,79 +101,96 @@ AvoInspector.enableLogging(true);
 
 # Sending event schemas
 
-Whenever you send tracking event call one of the following methods.
-
-Example usage:
+Whenever you send a tracking event, track it with Avo Inspector too. `trackSchemaFromEvent` takes
+one `InspectorEvent`:
 
 ```java
 void trackAppOpened(Map<String, ?> appOpenedEventParams) {
     tracker.track("App Opened", appOpenedEventParams);
-    this.avoInspector.trackSchemaFromEvent("App Opened", appOpenedEventParams);
+    this.avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+            .eventName("App Opened")
+            .eventProperties(appOpenedEventParams)
+            .build());
 }
+```
+
+With a gateway-scoped API key, always pass `originHint` and `originAppVersion`. Pass
+`outputReference` when the payload was bound for a specific output; leave it out for an
+observation at the gateway checkpoint.
+
+```java
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Purchase")
+        .eventProperties(properties)
+        .streamId("stream-id")
+        .outputReference("meta-x7k2q")
+        .originHint("android")
+        .originAppVersion("4.2.0")
+        .build());
 ```
 
 Read more in the [Avo documentation](https://www.avo.app/docs/implementation/devs-101#inspecting-events)
 
 ### 1.
 
-These methods get actual tracking event parameters, extract schema automatically and send it to the Avo Inspector backend.
-It is the easiest way to use the library, just call this method at the same place you call your analytics tools' track methods with the same parameters.
+`trackSchemaFromEvent` gets the actual tracking event properties, extracts the schema
+automatically and sends it to the Avo Inspector backend. It is the easiest way to use the library:
+call it at the same place you call your analytics tools' track methods, with the same values.
 
 ```java
-avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
-                        put("String Prop", "Prop Value");
-                        put("Float Name", 1.0);
-                        put("Bool Name", true);
-                    }});
-```
-Second parameter can also be a `JSONObject`.
-
-An event tracked with a `null`, empty or whitespace-only name is still sent, under the event name
-`Missing Event Name`, and a warning is printed (at most once every 10 seconds). A valid name is
-sent exactly as given, surrounding whitespace included.
-
-The method returns the extracted schema as soon as the event is queued; it never waits for the
-network. Property order follows the map's iteration order, so use a `LinkedHashMap` if order
-matters to you (a `JSONObject` does not keep insertion order).
-
-#### Stream id and gateway options
-
-Pass a stream id (any correlation id you choose; `null` sends `""`) and, when you use a
-gateway-scoped API key, the gateway coordinates. Java has no named arguments, so the three
-coordinates are grouped in one `TrackOptions` object:
-
-```java
-avoInspector.trackSchemaFromEvent("Purchase", properties, "stream-id", TrackOptions.builder()
-        .outputReference("meta-x7k2q")   // gateway output the event was bound for; omit for the gateway checkpoint
-        .originHint("android")           // low-cardinality source label; never a user id
-        .originAppVersion("4.2.0")       // that source's app version
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Event name")
+        .eventProperties(new HashMap<String, Object>() {{
+            put("String Prop", "Prop Value");
+            put("Float Name", 1.0);
+            put("Bool Name", true);
+        }})
         .build());
 ```
 
-Values are trimmed and blank values are ignored. When `originHint` is set without
+`eventProperties` also takes a `JSONObject`. Every value of an `InspectorEvent` is optional:
+
+| Builder method | Meaning |
+|---|---|
+| `eventName` | The event name. A `null`, empty or whitespace-only name is still sent, under the event name `Missing Event Name`, and a warning is printed (at most once every 10 seconds). A valid name is sent exactly as given, surrounding whitespace included. |
+| `eventProperties` | A `Map<String, ?>` or a `JSONObject`. None means no properties. |
+| `streamId` | Any correlation id you choose; none sends `""`. |
+| `outputReference` | The gateway output the event was bound for; leave it out for the gateway checkpoint. |
+| `originHint` | A low-cardinality label of the source the event came from, e.g. `"android"`; never a user id. |
+| `originAppVersion` | That source's app version, sent instead of the instance's. |
+| `target` | An `AvoInspectorTarget` to send the event to another Avo source (see below). |
+
+The gateway values are trimmed and blank values are ignored. When `originHint` is set without
 `originAppVersion`, the event is sent with a `null` app version (the instance's version belongs to
 a different source).
 
+A `null` event sends nothing and returns an empty schema; a line on stderr (at most once every 10
+seconds) says that the call takes one `InspectorEvent`.
+
+The method returns the extracted schema as soon as the event is queued; it never waits for the
+network. Property order follows the map's iteration order, so use a `LinkedHashMap` if order
+matters to you (a `JSONObject` does not keep insertion order). The properties are read when the
+event is tracked: build a new `InspectorEvent` for each call.
+
 #### Override Avo source
 
-You can track a schema for an Avo source different from the one you've initialised Avo Inspector instance with by providing an additional `AvoInspectorTarget` parameter to the `trackSchemaFromEvent` call.
+You can track a schema for an Avo source different from the one you've initialised Avo Inspector
+instance with by setting a `target`:
 
 ```java
-avoInspector.trackSchemaFromEvent("Event name", new HashMap<String, Object>() {{
-                        put("String Prop", "Prop Value");
-                        put("Float Name", 1.0);
-                        put("Bool Name", true);
-                    }}, new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"));
+avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+        .eventName("Event name")
+        .eventProperties(properties)
+        .target(new AvoInspectorTarget("Another-Api-Key", "Another-App-Name", "Another-App-Version"))
+        .build());
 ```
 
-Events for different targets are sent in separate requests. To combine a target with a stream id
-and gateway options, use `trackSchemaFromEvent(eventName, properties, target, streamId, options)`.
+Events for different targets are sent in separate requests.
 
-All of these methods, plus `flush()` and `destroy()`, are also on the `Inspector` interface. The
-methods added in 2.0 are default methods, so your own `Inspector` implementations keep compiling.
-If your implementation wraps an `AvoInspector`, forward `flush()`, `flush(long)` and `destroy()` to
-it: the defaults do nothing. Forward the stream id and `TrackOptions` overloads too; their defaults
-call the 1.x methods and drop the stream id and options.
+`trackSchemaFromEvent`, `trackSchema`, `extractSchema`, `flush()`, `flush(long)` and `destroy()`
+are the `Inspector` interface. It has no default methods: your own `Inspector` implementation
+implements all of them. If it wraps an `AvoInspector`, forward each one, `flush` and `destroy`
+included, or the wrapped instance never sends what it buffered.
 
 ### 2.
 
@@ -203,8 +221,11 @@ Map<String, AvoEventSchemaType> schema = avoInspector.extractSchema(new HashMap<
 Extraction stops expanding a map, list, array or `JSONObject` that is nested more than 10 levels
 deep, that contains itself, or that comes after the first 10,000 such values in one event (a value
 shared by many properties counts each time it appears). Such a value is reported as `"object"` with
-no children, or as the type `"object"` inside a list. Very large or cyclic payloads therefore take
-bounded time and memory.
+no children, or as the type `"object"` inside a list. At most 10,000 properties are reported per
+event, counted at every depth (a nested property counts as well as the one that contains it) in the
+map's iteration order; properties past that are left out, without a log line. Very large or cyclic
+payloads therefore take bounded time and memory: a map with a million keys yields its first 10,000
+properties.
 
 # Batching, flush and shutdown
 
@@ -226,15 +247,24 @@ avoInspector.flush();        // sends the buffer, waits up to 10 seconds for in-
 avoInspector.flush(2000);    // custom timeout in milliseconds
 ```
 
-`flush()` never throws, and the instance stays usable afterwards. In serverless functions also
-set `disableBatchTimer(true)`.
+`flush()` returns `true` if, when it returns, the instance has nothing buffered, waiting or in
+flight. It returns `false` if work is still pending, usually because the timeout ran out but also
+when other threads keep tracking, or if an internal error stopped the flush (logged on stderr); the
+sends it did not wait for carry on in the background. `flush(0)` starts the sends without waiting,
+so it returns `true` only if nothing was pending. After `destroy()` it returns `true`. `true` means
+drained, not delivered: a send can have failed or events can have been dropped, and those are
+reported on stderr. `flush()` never throws, and the instance stays usable afterwards. In
+serverless functions also set `disableBatchTimer(true)`.
 
 As a safety net, a JVM shutdown hook flushes every live instance, waiting up to 10 seconds in
 total. The hook runs when the JVM exits normally (for example when `main` returns or
 `System.exit` is called) or receives SIGTERM. It does not run on SIGKILL, `Runtime.halt()` or a
 JVM crash, and a serverless runtime may freeze or kill the process without running it, so an
 explicit `flush()` is still required. The hook only runs once the JVM is already shutting down, so
-it never keeps the process alive. An instance with buffered or in-flight events is kept reachable
+it never keeps the process alive. If the 10 seconds run out, the hook reports what it left behind
+before the JVM exits: `dropped N event(s) (unsent at exit)` for events that were never sent, and
+`dropped N event(s) (unconfirmed at exit)` for events in requests that had not completed (the
+server may or may not have received them). An instance with buffered or in-flight events is kept reachable
 until they are sent, so they are never lost to garbage collection; an idle instance can be
 garbage-collected without `destroy()`. With `disableBatchTimer(true)` and no `flush()`, an instance
 with buffered events therefore stays alive until the process exits.
@@ -260,27 +290,94 @@ about 4 × `batchSize` events per round trip to the Inspector API: with the defa
 busy wait their turn, and up to 10,000 events can wait. Beyond that the oldest waiting events are
 dropped. `maxQueueSize` bounds only the events not yet in a batch.
 
-Dropped events are always reported on stderr, whatever `enableLogging`, for example
+Dropped events are reported on stderr, whatever `enableLogging`, for example
 `Avo Inspector: dropped 8 event(s) (send backlog full) in the last 3s.` (or `queue full` when
-`maxQueueSize` is exceeded); so are non-200 responses. If you see drops:
+`maxQueueSize` is exceeded, or `unsent at exit` when the shutdown hook runs out of time); so are
+non-200 responses. Events lost to SIGKILL, `Runtime.halt()`, a JVM crash or `destroy()` are not
+reported, because no SDK code runs (or, for `destroy()`, you discarded them). If you see drops:
 
 - raise `batchSize` (for example to 100), so each request carries more events;
-- in a backfill or import script that tracks faster than that, call `flush()` every few thousand
-  events so the waiting batches drain:
+- in a backfill, import or other batch job, set `blockWhenBacklogged(true)`: a track call that
+  leaves 1,000 or more events waiting for a send slot then waits until fewer are waiting, which
+  paces the loop and slows the growth of the backlog. It does not guarantee delivery: each wait
+  lasts at most 10 seconds (the request timeout), so while the API is slow or down for longer the
+  loop keeps going, the backlog can pass 10,000 events, and the oldest are then dropped (and
+  logged). An interrupt or `destroy()` ends the wait. Don't set
+  it for request threads in a server: they would then wait whenever the Inspector API is slow.
+
+```java
+AvoInspector avoInspector = new AvoInspector(AvoInspectorOptions.builder()
+        .apiKey("MY_API_KEY").env(AvoInspectorEnv.Prod).appVersion("1.0.0")
+        .batchSize(100)
+        .blockWhenBacklogged(true)
+        .build());
+```
+
+- otherwise, call `flush()` every few thousand events so the waiting batches drain:
 
 ```java
 for (int i = 0; i < rows.size(); i++) {
-    avoInspector.trackSchemaFromEvent(rows.get(i).eventName, rows.get(i).properties);
+    avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+            .eventName(rows.get(i).eventName)
+            .eventProperties(rows.get(i).properties)
+            .build());
     if (i % 5000 == 4999) {
         avoInspector.flush();
     }
 }
-avoInspector.flush();
+// Drain with a bounded number of attempts (each waits up to 10 s), then give up.
+boolean drained = false;
+for (int attempt = 0; attempt < 6 && !drained; attempt++) {
+    drained = avoInspector.flush();
+}
+if (!drained) {
+    System.err.println("Avo Inspector did not drain; some events may not have been sent");
+}
 ```
+
+A single `flush()` waits at most 10 seconds, and up to 10,000 events can be waiting behind the 4
+requests, so the last `flush()` may return `false` with batches still to send. Each attempt shrinks
+the backlog, but draining can take minutes, longer than these attempts allow: against a slow or
+unresponsive endpoint every request uses its full 10 seconds, so 5,000 waiting events (about 167
+batches, 4 at a time) take about 7 minutes. Concurrent tracking from other threads can also keep
+`flush()` from ever seeing the instance drained. That is why the loop is bounded. To wait longer,
+pass a longer timeout to each attempt, for example `flush(60_000)`. Failed sends and dropped events
+are reported on stderr.
 
 # Upgrading from 1.x to 2.0
 
-2.0.0 keeps every existing constructor and method, but these behaviours change:
+2.0.0 keeps every constructor. The track call changes, and so does the `Inspector` interface:
+
+- **`trackSchemaFromEvent` takes one `InspectorEvent`.** Every positional form is removed: the 1.x
+  `trackSchemaFromEvent(eventName, properties)` and `trackSchemaFromEvent(eventName, properties,
+  target)`, for `Map` and `JSONObject` properties. Build the event instead:
+
+  ```java
+  // 1.x
+  avoInspector.trackSchemaFromEvent("Signed Up", properties);
+  avoInspector.trackSchemaFromEvent("Signed Up", properties, otherTarget);
+
+  // 2.0
+  avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+          .eventName("Signed Up")
+          .eventProperties(properties)
+          .build());
+  avoInspector.trackSchemaFromEvent(InspectorEvent.builder()
+          .eventName("Signed Up")
+          .eventProperties(properties)
+          .target(otherTarget)
+          .build());
+  ```
+
+  The same values produce the same request as before. `trackSchema` and `extractSchema` are
+  unchanged.
+- **A custom `Inspector` implementation must implement the 2.0 interface.** It declares
+  `trackSchemaFromEvent(InspectorEvent)`, `trackSchema`, `extractSchema`, `boolean flush()`,
+  `boolean flush(long)` and `void destroy()`, with no default methods. `flush` returns `true` when
+  nothing is left buffered, waiting or in flight. That means drained, not delivered: a send can
+  have failed or events can have been dropped (both are reported on stderr).
+
+These behaviours change too:
 
 - **Events are buffered outside dev.** In staging and prod, events wait in memory until 30 are
   queued, the oldest is 30 seconds old, or you call `flush()`. Call `flush()` before the process
@@ -299,9 +396,12 @@ avoInspector.flush();
 - **A `null` env falls back to dev** with a warning, where 1.x threw a `NullPointerException`.
 - **List types on the wire use the first element's type.** 1.x sent the union of element types,
   e.g. `list<int|string>`. 2.0.0 sends `list(int)`, from the first element only, and lists the
-  element types separately as children. An empty list is `list(string)`. `AvoEventSchemaType`
+  element types separately as children, each distinct element schema once in first-occurrence
+  order (maps with the same properties and types are one child, whatever their key order). An
+  empty list is `list(string)`, except a primitive numeric array, which is typed by its component
+  type even when empty: an empty `double[]` is `list(float)`. `AvoEventSchemaType`
   `toString()`, `equals()` and `hashCode()` are unchanged and still use the 1.x names.
-- **Track methods never return an empty result because of the HTTP response.** They return the
+- **`trackSchemaFromEvent` never returns an empty result because of the HTTP response.** It returns the
   extracted schema as soon as the event is queued, whatever the server later answers, including a
   non-200. The returned map now keeps the input's property order.
 - **Internal errors throw in dev and are swallowed in staging and prod**, including `Error`s such
@@ -315,9 +415,10 @@ avoInspector.flush();
     refuses (`schema sending failed: Request failed.` / `Request timed out.`);
   - internal errors (`Avo Inspector: something went wrong... (<exception class>)`), with the
     exception's class name only, never its message;
-  - dropped events (`dropped N event(s) (queue full)`, `(send backlog full)` or `(internal
-    error)` for a send that could not be started or failed with an error) and non-200
-    responses (`N batch(es) rejected with HTTP <status>`);
+  - dropped events (`dropped N event(s) (queue full)`, `(send backlog full)`, `(internal
+    error)` for a send that could not be started or failed with an error, and `(unsent at exit)`
+    or `(unconfirmed at exit)` for what the shutdown hook could not send or confirm within its 10
+    seconds) and non-200 responses (`N batch(es) rejected with HTTP <status>`);
   - the warning for a stream id containing `:`, and for events tracked without an event name
     (sent as `Missing Event Name`);
   - configuration warnings: invalid env, invalid batch options, and `batchSize` larger than

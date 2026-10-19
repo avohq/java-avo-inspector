@@ -8,7 +8,7 @@ import org.jetbrains.annotations.Nullable;
  *
  * <p>{@code apiKey} and {@code appVersion} are required. Unset batch options take the defaults:
  * {@code batchSize} 30 (forced to 1 in dev), {@code batchFlushSeconds} 30, {@code maxQueueSize}
- * 1000, {@code disableBatchTimer} false.
+ * 1000, {@code disableBatchTimer} false, {@code blockWhenBacklogged} false.
  */
 public final class AvoInspectorOptions {
 
@@ -21,6 +21,7 @@ public final class AvoInspectorOptions {
     @Nullable final Double batchFlushSeconds;
     @Nullable final Integer maxQueueSize;
     final boolean disableBatchTimer;
+    final boolean blockWhenBacklogged;
 
     private AvoInspectorOptions(Builder builder) {
         this.apiKey = builder.apiKey;
@@ -32,6 +33,7 @@ public final class AvoInspectorOptions {
         this.batchFlushSeconds = builder.batchFlushSeconds;
         this.maxQueueSize = builder.maxQueueSize;
         this.disableBatchTimer = builder.disableBatchTimer;
+        this.blockWhenBacklogged = builder.blockWhenBacklogged;
     }
 
     /** Starts an {@link AvoInspectorOptions} with no values set. */
@@ -51,6 +53,7 @@ public final class AvoInspectorOptions {
         @Nullable private Double batchFlushSeconds;
         @Nullable private Integer maxQueueSize;
         private boolean disableBatchTimer;
+        private boolean blockWhenBacklogged;
 
         private Builder() {
         }
@@ -125,6 +128,21 @@ public final class AvoInspectorOptions {
         @NotNull
         public Builder disableBatchTimer(boolean disableBatchTimer) {
             this.disableBatchTimer = disableBatchTimer;
+            return this;
+        }
+
+        /**
+         * When true, a track call that leaves 1,000 or more events waiting for a send slot waits
+         * until fewer are waiting, for at most 10 seconds per call. This paces the caller and slows
+         * the growth of the backlog but does not guarantee delivery: while the API is slow or down
+         * for longer, the backlog can still pass 10,000 events and the oldest are then dropped (and
+         * logged). An interrupt or {@code destroy()} ends the wait.
+         * Recommended for backfill and batch jobs that track in a tight loop; not for request
+         * threads, which would then wait whenever the Inspector API is slow. Default false.
+         */
+        @NotNull
+        public Builder blockWhenBacklogged(boolean blockWhenBacklogged) {
+            this.blockWhenBacklogged = blockWhenBacklogged;
             return this;
         }
 

@@ -86,7 +86,7 @@ public class LoggingTests {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.networkCallsHandler.endpointForTesting = closedPortUrl();
 
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
 
         assertTrue(stderr(), stderr().contains("Avo Inspector: schema sending failed: Request failed."));
@@ -115,7 +115,7 @@ public class LoggingTests {
             }
         };
 
-        assertTrue(inspector.trackSchemaFromEvent("Event", broken).isEmpty());
+        assertTrue(inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(broken).build()).isEmpty());
 
         assertTrue(stderr(), stderr().contains("Avo Inspector: something went wrong. Please report to support@avo.app."));
         assertFalse(stderr().contains(API_KEY));
@@ -138,12 +138,12 @@ public class LoggingTests {
         captured.reset();
 
         for (int i = 0; i < 20; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.singletonMap("email", "alice@example.com"));
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.singletonMap("email", "alice@example.com")).build());
         }
         assertEquals(stderr(), "Avo Inspector: dropped 1 event(s) (queue full) in the last 1s.\n", stderr());
 
         pastTheWindow();
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         assertTrue(stderr(), stderr().endsWith("Avo Inspector: dropped 19 event(s) (queue full) in the last 11s.\n"));
         assertFalse(stderr().contains(API_KEY));
         assertFalse(stderr().contains("alice@example.com"));
@@ -157,7 +157,7 @@ public class LoggingTests {
         AvoInspector.enableLogging(false);
         captured.reset();
         for (int i = 0; i < 20; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         return inspector;
     }
@@ -232,12 +232,130 @@ public class LoggingTests {
         }
     }
 
+    @Test(timeout = 10_000)
+    public void theShutdownDrainReportsWhatItCouldNotSendBeforeItsDeadline() {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AvoBatcher batcher = new AvoBatcher(new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(java.util.List<Map<String, Object>> events, String apiKey) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        }, 2, 30, 1000, true);
+        try {
+            // 15 events in batches of 2: 4 sends (8 events) run and hang, 3 sends (6) wait for a
+            // slot, 1 event is buffered; the drain adds it to the waiting sends.
+            for (int i = 0; i < 15; i++) {
+                batcher.enqueue(AvoBatcherTests.event("E" + i));
+            }
+            AvoBatcher.flushAllAtShutdown(200);
+            assertEquals(stderr(), "Avo Inspector: dropped 7 event(s) (unsent at exit) in the last 1s.\n"
+                    + "Avo Inspector: dropped 8 event(s) (unconfirmed at exit) in the last 1s.\n", stderr());
+        } finally {
+            release.countDown();
+            batcher.destroy();
+        }
+    }
+
+    // A sender that holds every send until released, then optionally reports it failed.
+    private static AvoBatcher.Sender heldSender(final java.util.concurrent.CountDownLatch release,
+                                                final java.util.concurrent.atomic.AtomicInteger calls, final boolean fail) {
+        return new AvoBatcher.Sender() {
+            @Override
+            public AvoNetworkCallsHandler.SendResult send(java.util.List<Map<String, Object>> events, String apiKey) {
+                calls.incrementAndGet();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (fail) {
+                    AvoLog.failed("Request timed out");
+                    return AvoNetworkCallsHandler.SendResult.FAILED;
+                }
+                return AvoNetworkCallsHandler.SendResult.OK;
+            }
+        };
+    }
+
+    @Test(timeout = 10_000)
+    public void sendsQueuedBehindAFullPoolAreUnsentAtExitAndNeverStart() throws Exception {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        // A pool with one thread: of the 4 sends this instance may run, 1 starts and 3 queue.
+        java.util.concurrent.ExecutorService onePool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        AvoBatcher.sendExecutorForTesting = onePool;
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, false), 2, 30, 1000, true);
+        try {
+            // 11 events in batches of 2: 1 send (2 events) runs, 3 sends (6) are queued in the pool,
+            // 1 send (2) waits for a slot and 1 event is buffered (the drain adds it as a send).
+            for (int i = 0; i < 11; i++) {
+                batcher.enqueue(AvoBatcherTests.event("E" + i));
+            }
+            AvoBatcher.flushAllAtShutdown(200);
+            assertEquals(stderr(), "Avo Inspector: dropped 9 event(s) (unsent at exit) in the last 1s.\n"
+                    + "Avo Inspector: dropped 2 event(s) (unconfirmed at exit) in the last 1s.\n", stderr());
+
+            // What was counted unsent is never sent afterwards.
+            release.countDown();
+            onePool.shutdown();
+            assertTrue(onePool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1, calls.get());
+        } finally {
+            AvoBatcher.sendExecutorForTesting = null;
+            release.countDown();
+            onePool.shutdownNow();
+            batcher.destroy();
+        }
+    }
+
+    @Test(timeout = 10_000)
+    public void aSendCountedUnconfirmedAtExitDoesNotAlsoReportItsFailure() throws Exception {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, true), 2, 30, 1000, true);
+        try {
+            batcher.enqueue(AvoBatcherTests.event("E1"));
+            batcher.enqueue(AvoBatcherTests.event("E2"));
+            AvoBatcher.flushAllAtShutdown(200);
+            String atExit = "Avo Inspector: dropped 2 event(s) (unconfirmed at exit) in the last 1s.\n";
+            assertEquals(stderr(), atExit, stderr());
+
+            // The send then times out: it was already counted, so its failure is not reported too.
+            release.countDown();
+            assertTrue(batcher.flush(5_000));
+            assertEquals(stderr(), atExit, stderr());
+        } finally {
+            release.countDown();
+            batcher.destroy();
+        }
+    }
+
+    @Test(timeout = 10_000)
+    public void aSendThatFailedBeforeTheDeadlineIsNotCountedAtExit() {
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(0);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        AvoBatcher batcher = new AvoBatcher(heldSender(release, calls, true), 2, 30, 1000, true);
+        try {
+            batcher.enqueue(AvoBatcherTests.event("E1"));
+            batcher.enqueue(AvoBatcherTests.event("E2"));
+            AvoBatcher.flushAllAtShutdown(5_000);
+            assertEquals(stderr(), "Avo Inspector: schema sending failed: Request timed out.\n", stderr());
+        } finally {
+            batcher.destroy();
+        }
+    }
+
     @Test
     public void non200IsLoggedOncePerStatusPerWindow() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         server.respond(500, "{}");
         for (int i = 0; i < 5; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         inspector.flush();
         assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 1 batch(es) rejected with HTTP 500 in the last 1s."));
@@ -248,7 +366,7 @@ public class LoggingTests {
         assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 4 batch(es) rejected with HTTP 500 in the last 11s."));
 
         server.respond(400, "{}");
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
         assertEquals(stderr(), 1, count(stderr(), "Avo Inspector: 1 batch(es) rejected with HTTP 400 in the last 1s."));
         assertEquals(stderr(), 3, count(stderr(), "rejected with HTTP"));
@@ -260,7 +378,7 @@ public class LoggingTests {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.networkCallsHandler.endpointForTesting = closedPortUrl();
         for (int i = 0; i < 5; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         inspector.flush();
         assertEquals(stderr(), "Avo Inspector: schema sending failed: Request failed.\n", stderr());
@@ -280,12 +398,12 @@ public class LoggingTests {
             }
         };
         for (int i = 0; i < 5; i++) {
-            inspector.trackSchemaFromEvent("Event", broken);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(broken).build());
         }
         assertEquals(stderr(), 1, count(stderr(), "something went wrong"));
 
         pastTheWindow();
-        inspector.trackSchemaFromEvent("Event", broken);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(broken).build());
         assertTrue(stderr(), stderr().contains(
                 "Avo Inspector: something went wrong. Please report to support@avo.app. (4 more in the last 11s) (java.lang.IllegalStateException)"));
     }
@@ -294,13 +412,13 @@ public class LoggingTests {
     public void theStreamIdColonWarningIsRateLimited() {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         for (int i = 0; i < 5; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap(), "user:42", null);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).streamId("user:42").build());
         }
         assertEquals(stderr(), 1, count(stderr(), "streamId contains ':'"));
         assertFalse(stderr(), stderr().contains("more in the last"));
 
         pastTheWindow();
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap(), "user:42", null);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).streamId("user:42").build());
         assertTrue(stderr(), stderr().contains("streamId contains ':'; using the value verbatim. (4 more in the last 11s)"));
         assertFalse(stderr(), stderr().contains("user:42"));
     }
@@ -322,13 +440,13 @@ public class LoggingTests {
             }
         }, "value");
 
-        inspector.trackSchemaFromEvent("Event", throwingMap);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(throwingMap).build());
         pastTheWindow();
         inspector.extractSchema(throwingKey);
         pastTheWindow();
         @SuppressWarnings("unchecked")
         Map<String, ?> keyMap = (Map<String, ?>) (Map<?, ?>) throwingKey;
-        inspector.trackSchemaFromEvent("Event", keyMap);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(keyMap).build());
 
         assertEquals(stderr(), 3, count(stderr(), "Avo Inspector: something went wrong. Please report to support@avo.app. (java.lang.IllegalStateException)"));
         assertFalse(stderr(), stderr().contains("MARKER"));
@@ -339,9 +457,9 @@ public class LoggingTests {
     public void aMissingEventNameIsSentAsAPlaceholder() throws Exception {
         String line = "Avo Inspector: %d event(s) tracked without an event name in the last %ds, sent as \"Missing Event Name\".";
         AvoInspector prod = inspector(AvoInspectorEnv.Prod);
-        Map<String, AvoEventSchemaType> schema = prod.trackSchemaFromEvent(null, Collections.<String, Object>singletonMap("a", 1));
-        prod.trackSchemaFromEvent("", Collections.<String, Object>singletonMap("b", "x"));
-        prod.trackSchemaFromEvent("  ", Collections.<String, Object>singletonMap("c", true));
+        Map<String, AvoEventSchemaType> schema = prod.trackSchemaFromEvent(InspectorEvent.builder().eventName(null).eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
+        prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("").eventProperties(Collections.<String, Object>singletonMap("b", "x")).build());
+        prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("  ").eventProperties(Collections.<String, Object>singletonMap("c", true)).build());
         prod.flush();
 
         assertEquals(1, schema.size());
@@ -365,8 +483,8 @@ public class LoggingTests {
 
         // Never throws, dev included; a valid name keeps its surrounding whitespace.
         AvoInspector dev = inspector(AvoInspectorEnv.Dev);
-        assertEquals(1, dev.trackSchemaFromEvent(null, Collections.<String, Object>singletonMap("e", 1)).size());
-        dev.trackSchemaFromEvent("  Signed Up ", Collections.<String, Object>emptyMap());
+        assertEquals(1, dev.trackSchemaFromEvent(InspectorEvent.builder().eventName(null).eventProperties(Collections.<String, Object>singletonMap("e", 1)).build()).size());
+        dev.trackSchemaFromEvent(InspectorEvent.builder().eventName("  Signed Up ").eventProperties(Collections.<String, Object>emptyMap()).build());
         dev.flush();
         assertEquals(6, server.requests().size());
         java.util.Set<String> devNames = new java.util.TreeSet<>();
@@ -377,11 +495,46 @@ public class LoggingTests {
     }
 
     @Test
+    public void aNullEventSendsNothingAndSaysWhatTheCallTakes() throws Exception {
+        String line = "Avo Inspector: trackSchemaFromEvent takes one InspectorEvent since 2.0.0, built with "
+                + "InspectorEvent.builder(); it was given null, so nothing was sent.";
+        AvoInspector prod = inspector(AvoInspectorEnv.Prod);
+        AvoInspector dev = inspector(AvoInspectorEnv.Dev);
+
+        // Never throws, dev included; the second line within the window is counted, not printed.
+        assertTrue(prod.trackSchemaFromEvent(null).isEmpty());
+        assertTrue(dev.trackSchemaFromEvent(null).isEmpty());
+        prod.flush();
+        dev.flush();
+        assertEquals(0, server.requests().size());
+        assertEquals(stderr(), line + "\n", stderr());
+
+        pastTheWindow();
+        Inspector asInterface = prod;
+        assertTrue(asInterface.trackSchemaFromEvent(null).isEmpty());
+        assertEquals(stderr(), line + "\n" + line + " (1 more in the last 11s)\n", stderr());
+        assertEquals(0, server.requests().size());
+    }
+
+    @Test
+    public void anEmptyEventIsSentAsMissingEventNameWithNoProperties() throws Exception {
+        AvoInspector prod = inspector(AvoInspectorEnv.Prod);
+        assertTrue(prod.trackSchemaFromEvent(InspectorEvent.builder().build()).isEmpty());
+        prod.flush();
+
+        assertEquals(1, server.requests().size());
+        org.json.JSONObject event = server.requests().get(0).body.getJSONObject(0);
+        assertEquals("Missing Event Name", event.getString("eventName"));
+        assertEquals("", event.getString("streamId"));
+        assertEquals(0, event.getJSONArray("eventProperties").length());
+    }
+
+    @Test
     public void samplingDropsPrintNothingWithLoggingOff() {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
         inspector.setSamplingRateForTesting(0.0);
         for (int i = 0; i < 10; i++) {
-            inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         assertEquals("", stderr());
     }
@@ -390,7 +543,7 @@ public class LoggingTests {
     public void successfulSendIsSilentWithLoggingOff() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Prod);
 
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         inspector.flush();
 
         assertEquals(1, server.requests().size());
@@ -406,9 +559,9 @@ public class LoggingTests {
         System.setOut(new PrintStream(out, true, "UTF-8"));
         try {
             inspector.setSamplingRateForTesting(0.0);
-            inspector.trackSchemaFromEvent("Dropped", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Dropped").eventProperties(Collections.<String, Object>emptyMap()).build());
             inspector.setSamplingRateForTesting(1.0);
-            inspector.trackSchemaFromEvent("Kept", Collections.<String, Object>emptyMap());
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Kept").eventProperties(Collections.<String, Object>emptyMap()).build());
         } finally {
             System.setOut(originalOut);
         }
@@ -432,7 +585,7 @@ public class LoggingTests {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         System.setOut(new PrintStream(out, true, "UTF-8"));
         try {
-            inspector.trackSchemaFromEvent("Event", props);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(props).build());
             inspector.extractSchema(props);
         } finally {
             System.setOut(originalOut);
@@ -497,7 +650,7 @@ public class LoggingTests {
         System.setOut(new PrintStream(new ByteArrayOutputStream(), true, "UTF-8"));
         Map<String, AvoEventSchemaType> schema;
         try {
-            schema = inspector.trackSchemaFromEvent("Event", props);
+            schema = inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(props).build());
         } finally {
             System.setOut(originalOut);
         }
@@ -522,7 +675,7 @@ public class LoggingTests {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         System.setOut(new PrintStream(out, true, "UTF-8"));
         try {
-            prod.trackSchemaFromEvent("Signed Up", props);
+            prod.trackSchemaFromEvent(InspectorEvent.builder().eventName("Signed Up").eventProperties(props).build());
             prod.extractSchema(props);
             prod.flush();
         } finally {
@@ -541,7 +694,7 @@ public class LoggingTests {
     public void requestsAbandonedByDestroyAreNotReportedAsFailures() throws Exception {
         server.delayResponses(1000);
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev);
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         server.awaitRequest(0, 5000);
 
         inspector.destroy();

@@ -23,12 +23,19 @@ import static org.junit.Assert.assertNull;
 public class RedeployTests {
 
     private MockInspectorServer server;
+    private java.io.PrintStream originalErr;
+    // The undeployed instance's network handler, for tests that do not check it is collected.
+    private Object lastHandler;
+    private java.io.ByteArrayOutputStream captured;
     private final List<String> uncaught = Collections.synchronizedList(new ArrayList<String>());
     private Thread.UncaughtExceptionHandler previousHandler;
 
     @Before
     public void setUp() throws Exception {
         server = new MockInspectorServer();
+        originalErr = System.err;
+        captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, "UTF-8"));
         previousHandler = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
@@ -40,6 +47,7 @@ public class RedeployTests {
 
     @After
     public void tearDown() {
+        System.setErr(originalErr);
         Thread.setDefaultUncaughtExceptionHandler(previousHandler);
         server.close();
     }
@@ -50,6 +58,10 @@ public class RedeployTests {
 
     // flush: undeploy after flush(); otherwise the 0.3 s flush timer sends after the loader is closed.
     private WeakReference<ClassLoader> deployUseAndUndeploy(boolean flush) throws Exception {
+        return deployUseAndUndeploy("Staging", 5, flush);
+    }
+
+    private WeakReference<ClassLoader> deployUseAndUndeploy(String env, int events, boolean flush) throws Exception {
         String sdkJar = System.getProperty("avo.sdk.jar");
         assertNotNull("avo.sdk.jar is set by the Gradle test task", sdkJar);
         URLClassLoader loader = new URLClassLoader(new URL[]{new File(sdkJar).toURI().toURL(), jarOf(org.json.JSONObject.class)}, null);
@@ -60,7 +72,7 @@ public class RedeployTests {
             Class<?> inspectorClass = loader.loadClass("is.avo.inspector.AvoInspector");
             Class<?> envClass = loader.loadClass("is.avo.inspector.AvoInspectorEnv");
             Class<?> optionsClass = loader.loadClass("is.avo.inspector.AvoInspectorOptions");
-            Object staging = envClass.getMethod("valueOf", String.class).invoke(null, "Staging");
+            Object staging = envClass.getMethod("valueOf", String.class).invoke(null, env);
             Object builder = optionsClass.getMethod("builder").invoke(null);
             Class<?> builderClass = builder.getClass();
             builderClass.getMethod("apiKey", String.class).invoke(builder, "key");
@@ -73,9 +85,16 @@ public class RedeployTests {
             java.lang.reflect.Field endpoint = handler.getClass().getDeclaredField("endpointForTesting");
             endpoint.setAccessible(true);
             endpoint.set(handler, server.url());
-            Method track = inspectorClass.getMethod("trackSchemaFromEvent", String.class, Map.class);
-            for (int i = 0; i < 5; i++) {
-                track.invoke(inspector, "Redeploy", Collections.<String, Object>singletonMap("a", i));
+            lastHandler = handler;
+            Class<?> eventClass = loader.loadClass("is.avo.inspector.InspectorEvent");
+            Method track = inspectorClass.getMethod("trackSchemaFromEvent", eventClass);
+            Method newEvent = eventClass.getMethod("builder");
+            Class<?> eventBuilderClass = newEvent.getReturnType();
+            for (int i = 0; i < events; i++) {
+                Object eventBuilder = newEvent.invoke(null);
+                eventBuilderClass.getMethod("eventName", String.class).invoke(eventBuilder, "Redeploy");
+                eventBuilderClass.getMethod("eventProperties", Map.class).invoke(eventBuilder, Collections.<String, Object>singletonMap("a", i));
+                track.invoke(inspector, eventBuilderClass.getMethod("build").invoke(eventBuilder));
             }
             if (flush) {
                 inspectorClass.getMethod("flush").invoke(inspector);
@@ -104,16 +123,59 @@ public class RedeployTests {
         assertUndeployLeavesNothingBehind(deployUseAndUndeploy(false));
     }
 
-    private void assertUndeployLeavesNothingBehind(WeakReference<ClassLoader> loader) throws Exception {
+    // Dev sends each event at once; the loader is closed while those sends (and their responses)
+    // are still being handled.
+    @Test(timeout = 60_000)
+    public void devSendsAnsweredAfterUndeployAreDeliveredWithoutErrors() throws Exception {
+        // Every response arrives after the loader is closed, so the first one is parsed then.
+        server.holdResponses();
+        WeakReference<ClassLoader> loader = deployUseAndUndeploy("Dev", 50, false);
+        server.releaseResponses();
+        assertUndeployLeavesNothingBehind(loader, 50);
+    }
+
+    // The response parser runs for the first time after the loader is closed, and still works.
+    @Test(timeout = 60_000)
+    public void aResponseParsedAfterUndeployStillSetsTheSamplingRate() throws Exception {
+        server.holdResponses();
+        server.respond(200, "{\"samplingRate\":0.7}");
+        deployUseAndUndeploy("Dev", 3, false);
+        server.releaseResponses();
         long sentBy = System.currentTimeMillis() + 5_000;
-        while (server.requests().isEmpty() && System.currentTimeMillis() < sentBy) {
+        while (eventsReceived() < 3 && System.currentTimeMillis() < sentBy) {
             Thread.sleep(50);
         }
+        Thread.sleep(500);
+        java.lang.reflect.Field rate = lastHandler.getClass().getDeclaredField("samplingRate");
+        rate.setAccessible(true);
+        assertEquals(0.7, rate.getDouble(lastHandler), 0.0);
+        lastHandler = null;
+    }
+
+    private void assertUndeployLeavesNothingBehind(WeakReference<ClassLoader> loader) throws Exception {
+        assertUndeployLeavesNothingBehind(loader, 5);
+    }
+
+    private int eventsReceived() {
         int events = 0;
         for (MockInspectorServer.Request request : server.requests()) {
             events += request.body.length();
         }
-        assertEquals(5, events);
+        return events;
+    }
+
+    private void assertUndeployLeavesNothingBehind(WeakReference<ClassLoader> loader, int expected) throws Exception {
+        long sentBy = System.currentTimeMillis() + 5_000;
+        while (eventsReceived() < expected && System.currentTimeMillis() < sentBy) {
+            Thread.sleep(50);
+        }
+        // Let the last responses be handled.
+        Thread.sleep(500);
+        assertEquals(expected, eventsReceived());
+        String stderr = captured.toString("UTF-8");
+        org.junit.Assert.assertFalse(stderr, stderr.contains("dropped"));
+        org.junit.Assert.assertFalse(stderr, stderr.contains("something went wrong"));
+        lastHandler = null;
 
         long deadline = System.currentTimeMillis() + 30_000;
         while (loader.get() != null && System.currentTimeMillis() < deadline) {
