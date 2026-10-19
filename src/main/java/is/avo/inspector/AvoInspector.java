@@ -2,7 +2,6 @@ package is.avo.inspector;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.json.JSONObject;
 
 import java.util.*;
 import java.util.concurrent.Future;
@@ -27,7 +26,7 @@ public class AvoInspector implements Inspector {
 
     static final String NO_API_KEY_MESSAGE = "[Avo Inspector] No API key provided. Inspector can't operate without API key.";
     static final String API_KEY_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] API key contains a control character. The API key is sent as a request header and cannot contain CR, LF, or NUL.";
-    static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "Avo Inspector: apiKey must not contain control characters";
+    static final String API_KEY_OTHER_CONTROL_CHARACTER_MESSAGE = "[Avo Inspector] apiKey must not contain control characters";
     static final String NO_VERSION_MESSAGE = "[Avo Inspector] No version provided. Many features of Inspector rely on versioning. Please provide comparable string version, i.e. integer or semantic.";
 
     // Sent as the event name of an event tracked with a null, empty or whitespace-only name.
@@ -143,7 +142,7 @@ public class AvoInspector implements Inspector {
             public AvoNetworkCallsHandler.SendResult send(List<Map<String, Object>> events, String apiKey) {
                 return handler.send(events, apiKey);
             }
-        }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer);
+        }, batchSize, batchFlushSeconds, maxQueueSize, options.disableBatchTimer, options.blockWhenBacklogged);
 
         enableLogging(resolvedEnv == AvoInspectorEnv.Dev);
     }
@@ -185,68 +184,18 @@ public class AvoInspector implements Inspector {
         return AvoInspectorEnv.Dev;
     }
 
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties) {
-        return this.trackSchemaFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget);
-    }
-
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget) {
-        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, null, null, false);
-    }
-
     /**
-     * Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1).
+     * Extracts the schema of the event's properties and queues the event for the Inspector backend,
+     * or for the event's {@link InspectorEvent#getTarget() target} source.
      *
-     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
-     * @param options  gateway coordinates for this call only; may be {@code null}
+     * <p>A {@code null} event sends nothing and returns an empty schema; a line on stderr (at most
+     * once every 10 seconds) says that this method takes one {@link InspectorEvent} since 2.0.0.
+     *
+     * @return the extracted schema, as soon as the event is queued; never waits for the network
      */
     @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
-        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
-    }
-
-    /**
-     * Tracks an event for another Avo source, with a stream id and gateway options.
-     *
-     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
-     * @param options  gateway coordinates for this call only; may be {@code null}
-     */
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable JSONObject eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
-        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
-    }
-
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties) {
-        return this.trackSchemaFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget);
-    }
-
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget) {
-        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, null, null, false);
-    }
-
-    /**
-     * Tracks an event with a stream id and gateway options (SPEC.md §4.2, §4.2.1).
-     *
-     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
-     * @param options  gateway coordinates for this call only; may be {@code null}
-     */
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
-        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, false);
-    }
-
-    /**
-     * Tracks an event for another Avo source, with a stream id and gateway options.
-     *
-     * @param streamId caller-supplied correlation id; {@code null} or empty is sent as ""
-     * @param options  gateway coordinates for this call only; may be {@code null}
-     */
-    @Override
-    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@NotNull String eventName, @Nullable Map<String, ?> eventProperties, @NotNull AvoInspectorTarget overrideAvoInspectorTarget, @Nullable String streamId, @Nullable TrackOptions options) {
-        return trackFromEvent(eventName, eventProperties, overrideAvoInspectorTarget, streamId, options, false);
+    public @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEvent(@Nullable InspectorEvent event) {
+        return trackFromEvent(event, false);
     }
 
     /**
@@ -254,20 +203,24 @@ public class AvoInspector implements Inspector {
      * is sent immediately ({@code batchSize == 1}) it waits for that send and reports a non-200 as an
      * empty schema, which is the per-call outcome of SPEC.md §7.5.
      */
-    @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEventAwaitingSend(@NotNull String eventName, @Nullable Object eventProperties, @Nullable String streamId, @Nullable TrackOptions options) {
-        return trackFromEvent(eventName, eventProperties, this.defaultAvoInspectorTarget, streamId, options, true);
+    @NotNull Map<String, AvoEventSchemaType> trackSchemaFromEventAwaitingSend(@Nullable InspectorEvent event) {
+        return trackFromEvent(event, true);
     }
 
-    private @NotNull Map<String, AvoEventSchemaType> trackFromEvent(@NotNull String eventName, @Nullable Object eventProperties,
-                                                                    @NotNull AvoInspectorTarget target, @Nullable String streamId,
-                                                                    @Nullable TrackOptions options, boolean awaitImmediateSend) {
+    private @NotNull Map<String, AvoEventSchemaType> trackFromEvent(@Nullable InspectorEvent event, boolean awaitImmediateSend) {
+        if (event == null) {
+            AvoLog.nullEvent();
+            return new LinkedHashMap<>();
+        }
         if (destroyed) {
             return new LinkedHashMap<>();
         }
         try {
-            Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(eventProperties, false);
+            Map<String, AvoEventSchemaType> schema = avoSchemaExtractor.extractSchema(event.getEventProperties(), false);
 
-            List<Future<AvoNetworkCallsHandler.SendResult>> sends = trackSchemaInternal(eventName, schema, target, streamId, options);
+            AvoInspectorTarget target = event.getTarget() != null ? event.getTarget() : this.defaultAvoInspectorTarget;
+            List<Future<AvoNetworkCallsHandler.SendResult>> sends = trackSchemaInternal(event.getEventName(), schema, target,
+                    event.getStreamId(), event.getOutputReference(), event.getOriginHint(), event.getOriginAppVersion());
 
             if (awaitImmediateSend && batchSize == 1) {
                 for (Future<AvoNetworkCallsHandler.SendResult> send : sends) {
@@ -294,16 +247,17 @@ public class AvoInspector implements Inspector {
             return;
         }
         try {
-            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, null, null);
+            trackSchemaInternal(eventName, eventSchema, this.defaultAvoInspectorTarget, null, null, null, null);
         } catch (Throwable e) {
             // Errors too: nothing the SDK does may escape a track call outside dev (SPEC.md §4.2).
             handleException(e, AvoInspector.this.env);
         }
     }
 
-    private List<Future<AvoNetworkCallsHandler.SendResult>> trackSchemaInternal(@NotNull String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
-                                                                                 @NotNull AvoInspectorTarget avoInspectorTarget,
-                                                                                 @Nullable String streamId, @Nullable TrackOptions options) {
+    private List<Future<AvoNetworkCallsHandler.SendResult>> trackSchemaInternal(@Nullable String eventName, @Nullable Map<String, AvoEventSchemaType> eventSchema,
+                                                                                 @NotNull AvoInspectorTarget avoInspectorTarget, @Nullable String streamId,
+                                                                                 @Nullable String outputReference, @Nullable String originHint,
+                                                                                 @Nullable String originAppVersion) {
         // eventName is a required string on the wire (SPEC.md §7.3.2). A missing one is reported
         // under a placeholder rather than dropped (the cross-SDK rule); a valid name is sent as
         // given, surrounding whitespace included.
@@ -333,7 +287,7 @@ public class AvoInspector implements Inspector {
         }
 
         Map<String, Object> event = networkCallsBodyFactory.bodyForEventSchemaCall(eventName, eventSchema,
-                avoInspectorTarget, streamId, options, samplingRate);
+                avoInspectorTarget, streamId, outputReference, originHint, originAppVersion, samplingRate);
 
         // Logged before enqueue: the batcher may dispatch this event from within enqueue.
         logPostExtract(eventName, eventSchema);
@@ -376,27 +330,39 @@ public class AvoInspector implements Inspector {
     /**
      * Sends every buffered event and waits up to 10 seconds for all in-flight sends. Call it
      * before the process exits or a serverless handler returns, or buffered events are lost.
+     *
+     * @return true if this instance has nothing buffered, waiting or in flight when it returns;
+     * false if work is still pending (the 10 seconds ran out, or other threads kept tracking) or
+     * an internal error stopped the flush (logged on stderr). Drained, not delivered: failed sends
+     * and dropped events are reported on stderr.
      */
     @Override
-    public void flush() {
-        flush(DEFAULT_FLUSH_TIMEOUT_MS);
+    public boolean flush() {
+        return flush(DEFAULT_FLUSH_TIMEOUT_MS);
     }
 
     /**
      * Sends every buffered event and waits up to {@code timeoutMs} for all in-flight sends to
-     * complete. A negative timeout means the 10 second default. Never throws; the instance stays
-     * usable afterwards.
+     * complete. A negative timeout means the 10 second default; {@code 0} starts the sends without
+     * waiting. Never throws; the instance stays usable afterwards.
+     *
+     * @return true if this instance has nothing buffered, waiting or in flight when it returns
+     * (always true after {@link #destroy()}); false if work is still pending (the timeout ran out,
+     * or other threads kept tracking) or an internal error stopped the flush (logged on stderr).
+     * Drained, not delivered: failed sends and dropped events are reported on stderr.
      */
     @Override
-    public void flush(long timeoutMs) {
+    public boolean flush(long timeoutMs) {
+        boolean drained = false;
         try {
-            batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
+            drained = batcher.flush(timeoutMs < 0 ? DEFAULT_FLUSH_TIMEOUT_MS : timeoutMs);
         } catch (Throwable e) {
             Util.restoreInterrupt(e);
             Util.logInternalError(e);
         }
         // Report what the log limiter held back in windows that have expired (the cross-SDK rule).
         AvoLog.flushPending(true);
+        return drained;
     }
 
     /**

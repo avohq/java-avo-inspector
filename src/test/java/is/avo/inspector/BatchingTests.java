@@ -55,7 +55,7 @@ public class BatchingTests {
     public void devForcesImmediateSend() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Dev).batchSize(30));
 
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
 
         assertNotNull(server.awaitRequest(0, 5000));
         assertEquals(Collections.singletonList("E1"), eventNames(server.requests().get(0)));
@@ -67,10 +67,10 @@ public class BatchingTests {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Prod));
         assertEquals(30, inspector.batchSize);
         for (int i = 0; i < 29; i++) {
-            inspector.trackSchemaFromEvent("E" + i, NO_PROPS);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E" + i).eventProperties(NO_PROPS).build());
         }
         assertEquals(29, inspector.batcher.bufferedCount());
-        inspector.trackSchemaFromEvent("E29", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E29").eventProperties(NO_PROPS).build());
         assertNotNull(server.awaitRequest(0, 5000));
         assertEquals(30, server.requests().get(0).body.length());
     }
@@ -86,7 +86,7 @@ public class BatchingTests {
     public void sizeTriggerSendsExactlyBatchSizeEvents() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging).batchSize(3));
         for (int i = 1; i <= 4; i++) {
-            inspector.trackSchemaFromEvent("E" + i, NO_PROPS);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E" + i).eventProperties(NO_PROPS).build());
         }
         assertNotNull(server.awaitRequest(0, 5000));
         assertEquals(1, inspector.batcher.bufferedCount());
@@ -99,15 +99,15 @@ public class BatchingTests {
     public void timerFlushesTheOldestEventWithoutFurtherTraffic() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging).batchFlushSeconds(0.2));
 
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
-        inspector.trackSchemaFromEvent("E2", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E2").eventProperties(NO_PROPS).build());
 
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
         assertNotNull(request);
         assertEquals(2, request.body.length());
 
         // A later event starts a new window.
-        inspector.trackSchemaFromEvent("E3", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E3").eventProperties(NO_PROPS).build());
         assertNotNull(server.awaitRequest(1, 5000));
         assertEquals(Collections.singletonList("E3"), eventNames(server.requests().get(1)));
     }
@@ -118,7 +118,7 @@ public class BatchingTests {
                 .batchFlushSeconds(0.1).disableBatchTimer(true));
         assertFalse(inspector.batcher.isTimerRunning());
 
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
         Thread.sleep(600);
         assertEquals(0, server.requests().size());
 
@@ -132,10 +132,10 @@ public class BatchingTests {
         inspector.flush();
         assertEquals(0, server.requests().size());
 
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
         inspector.flush();
         inspector.flush();
-        inspector.trackSchemaFromEvent("E2", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E2").eventProperties(NO_PROPS).build());
         inspector.flush();
         assertEquals(2, server.requests().size());
     }
@@ -144,7 +144,7 @@ public class BatchingTests {
     public void flushReturnsAtItsTimeoutWhileASendIsStillInFlight() throws Exception {
         server.delayResponses(3000);
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
 
         long start = System.currentTimeMillis();
         inspector.flush(200);
@@ -159,7 +159,7 @@ public class BatchingTests {
         // As in Node and Go: a negative timeout is the 10 s default, not "don't wait".
         server.delayResponses(1000);
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
 
         inspector.flush(-1);
 
@@ -171,7 +171,7 @@ public class BatchingTests {
     public void maxQueueSizeDropsTheOldestEvents() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging).maxQueueSize(2));
         for (int i = 1; i <= 5; i++) {
-            inspector.trackSchemaFromEvent("E" + i, NO_PROPS);
+            inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E" + i).eventProperties(NO_PROPS).build());
         }
         inspector.flush();
         assertEquals(1, server.requests().size());
@@ -182,7 +182,7 @@ public class BatchingTests {
     public void destroyDiscardsBufferStopsTimerAndTerminatesTheInstance() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         inspector.setSamplingRateForTesting(0.75);
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
         assertTrue(inspector.batcher.isTimerRunning());
 
         inspector.destroy();
@@ -193,7 +193,7 @@ public class BatchingTests {
         assertEquals(0.75, inspector.networkCallsHandler.samplingRate, 0.0);
         assertEquals("test-key", inspector.defaultAvoInspectorTarget.getApiKey());
 
-        Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEvent("E2", Collections.<String, Object>singletonMap("a", 1));
+        Map<String, AvoEventSchemaType> schema = inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E2").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         assertTrue(schema.isEmpty());
         inspector.flush();
         assertEquals(0, server.requests().size());
@@ -203,7 +203,7 @@ public class BatchingTests {
     public void destroyAbandonsInFlightSends() throws Exception {
         server.delayResponses(2000);
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Dev));
-        inspector.trackSchemaFromEvent("E1", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(NO_PROPS).build());
         assertNotNull(server.awaitRequest(0, 5000));
 
         inspector.destroy();
@@ -215,9 +215,9 @@ public class BatchingTests {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         AvoInspectorTarget other = new AvoInspectorTarget("other-key", "OtherApp", "9.9.9");
 
-        inspector.trackSchemaFromEvent("Default1", NO_PROPS);
-        inspector.trackSchemaFromEvent("Other1", NO_PROPS, other);
-        inspector.trackSchemaFromEvent("Default2", NO_PROPS);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Default1").eventProperties(NO_PROPS).build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Other1").eventProperties(NO_PROPS).target(other).build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Default2").eventProperties(NO_PROPS).build());
         inspector.flush();
 
         assertEquals(2, server.requests().size());
@@ -240,8 +240,7 @@ public class BatchingTests {
     public void originHintWithoutOriginAppVersionSendsNullAppVersionForATarget() throws Exception {
         // SPEC.md §7.3.6: a source-scoped event never carries a configured version, the target's included.
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
-        inspector.trackSchemaFromEvent("P", NO_PROPS, new AvoInspectorTarget("other-key", "Other", "9.9.9"), null,
-                TrackOptions.builder().originHint("web").build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("P").eventProperties(NO_PROPS).target(new AvoInspectorTarget("other-key", "Other", "9.9.9")).originHint("web").build());
         inspector.flush();
 
         JSONObject event = server.requests().get(0).body.getJSONObject(0);
@@ -255,9 +254,9 @@ public class BatchingTests {
         AvoInspector inspector = inspector(AvoInspectorOptions.builder().env(AvoInspectorEnv.Staging));
         Map<String, Object> props = Collections.<String, Object>singletonMap("a", 1);
 
-        inspector.trackSchemaFromEvent("P", props, "s1", TrackOptions.builder().outputReference(" meta ").originAppVersion("4.2.0").build());
-        inspector.trackSchemaFromEvent("P", props, "s1", TrackOptions.builder().outputReference("ga4").originHint(" android ").build());
-        inspector.trackSchemaFromEvent("P", props, null, TrackOptions.builder().originHint("   ").originAppVersion("").build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("P").eventProperties(props).streamId("s1").outputReference(" meta ").originAppVersion("4.2.0").build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("P").eventProperties(props).streamId("s1").outputReference("ga4").originHint(" android ").build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("P").eventProperties(props).originHint("   ").originAppVersion("").build());
         inspector.flush();
 
         assertEquals(1, server.requests().size());

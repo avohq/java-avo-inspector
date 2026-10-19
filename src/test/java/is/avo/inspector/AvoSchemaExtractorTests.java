@@ -107,10 +107,34 @@ public class AvoSchemaExtractorTests {
     }
 
     @Test
-    public void nestedListsOfPrimitivesAreNotMerged() {
-        // SPEC.md §9.3.4: [[1], [2]] -> list(object) with one child per element.
-        assertWire("[{propertyName:v,propertyType:'list(object)',children:[[int],[int]]}]",
-                props("v", Arrays.asList(Collections.singletonList(1), Collections.singletonList(2))));
+    public void nestedListsAreDeduplicatedByValueInOrder() {
+        // [[1], [2], ["x"], [1, "x"], ["x", 1]]: equal children once, compared in order.
+        assertWire("[{propertyName:v,propertyType:'list(object)',children:[[int],[string],[int,string],[string,int]]}]",
+                props("v", Arrays.asList(Collections.singletonList(1), Collections.singletonList(2),
+                        Collections.singletonList("x"), Arrays.asList(1, "x"), Arrays.asList("x", 1))));
+    }
+
+    @Test
+    public void objectChildrenAreDeduplicatedRegardlessOfPropertyOrder() {
+        // The first occurrence is kept with its own property order; a property of another type, a
+        // different nested value or a missing property is a different schema.
+        assertWire("[{propertyName:v,propertyType:'list(object)',children:["
+                        + "[{propertyName:b,propertyType:string},{propertyName:a,propertyType:int}],"
+                        + "[{propertyName:a,propertyType:string},{propertyName:b,propertyType:string}],"
+                        + "[{propertyName:a,propertyType:int}],"
+                        + "[{propertyName:o,propertyType:object,children:[{propertyName:x,propertyType:int},{propertyName:y,propertyType:int}]}],"
+                        + "[{propertyName:o,propertyType:object,children:[{propertyName:x,propertyType:float}]}]]}]",
+                props("v", Arrays.asList(
+                        props("b", "x", "a", 1), props("a", 2, "b", "y"), props("a", "s", "b", "t"), props("a", 3),
+                        props("o", props("x", 1, "y", 2)), props("o", props("y", 3, "x", 4)),
+                        props("o", props("x", 1.5)))));
+    }
+
+    @Test
+    public void anEmptyObjectAndAnEmptyListAreTheSameChild() {
+        // Both are the empty array on the wire.
+        assertWire("[{propertyName:v,propertyType:'list(object)',children:[[]]}]",
+                props("v", Arrays.asList(props(), Collections.emptyList())));
     }
 
     @Test
@@ -121,6 +145,79 @@ public class AvoSchemaExtractorTests {
                         + "{propertyName:empty,propertyType:'list(string)',children:[]}]",
                 props("ints", new int[]{1, 2}, "doubles", new double[]{0.0}, "strings", new String[]{"a", "b"},
                         "empty", new boolean[0]));
+    }
+
+    @Test
+    public void emptyNumericArraysAreTypedByTheirComponent() {
+        // An empty boolean[] or char[] stays an empty list(string).
+        assertWire("[{propertyName:d,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:f,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:b,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:s,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:i,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:l,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:z,propertyType:'list(string)',children:[]},"
+                        + "{propertyName:c,propertyType:'list(string)',children:[]},"
+                        + "{propertyName:zz,propertyType:'list(boolean)',children:[boolean]},"
+                        + "{propertyName:cc,propertyType:'list(string)',children:[string]}]",
+                props("d", new double[0], "f", new float[0], "b", new byte[0], "s", new short[0],
+                        "i", new int[0], "l", new long[0], "z", new boolean[0], "c", new char[0],
+                        "zz", new boolean[]{true}, "cc", new char[]{'a'}));
+    }
+
+    // Cross-SDK parity fixture F1 (typed arrays); its digest is pinned in ExpansionBudgetTests.
+    static Map<String, Object> typedArraysFixture() {
+        return props("d", new double[]{0.5, 1.5}, "f", new float[]{0.5f}, "e", new double[0],
+                "b", new byte[]{1, 2}, "i", new int[]{1, 2});
+    }
+
+    // Cross-SDK parity fixture F2 (list dedup); its digest is pinned in ExpansionBudgetTests.
+    static Map<String, Object> dedupFixture() {
+        return props(
+                "maps", Arrays.asList(props("a", 1, "b", "x"), props("b", "y", "a", 2), props("a", 3)),
+                "lists", Arrays.asList(Collections.singletonList(1), Collections.singletonList(2),
+                        Collections.singletonList("x"), Collections.singletonList(3)),
+                "bins", Arrays.asList(new byte[]{1}, new byte[]{2, 3}, new byte[0]),
+                "mixed", Arrays.asList(1, "x", 2, "y"));
+    }
+
+    @Test
+    public void typedArraysFixtureStructure() {
+        assertWire("[{propertyName:d,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:f,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:e,propertyType:'list(float)',children:[float]},"
+                        + "{propertyName:b,propertyType:'list(int)',children:[int]},"
+                        + "{propertyName:i,propertyType:'list(int)',children:[int]}]",
+                typedArraysFixture());
+    }
+
+    @Test
+    public void dedupFixtureStructure() {
+        assertWire("[{propertyName:maps,propertyType:'list(object)',children:["
+                        + "[{propertyName:a,propertyType:int},{propertyName:b,propertyType:string}],"
+                        + "[{propertyName:a,propertyType:int}]]},"
+                        + "{propertyName:lists,propertyType:'list(object)',children:[[int],[string]]},"
+                        + "{propertyName:bins,propertyType:'list(object)',children:[[int]]},"
+                        + "{propertyName:mixed,propertyType:'list(int)',children:[int,string]}]",
+                dedupFixture());
+    }
+
+    @Test(timeout = 10_000)
+    public void nearlyTenThousandObjectChildrenAreDeduplicatedInOnePass() {
+        // One hash lookup per element, no pairwise comparison. 9,990 maps stay inside both budgets.
+        List<Object> distinct = new ArrayList<>();
+        for (int i = 0; i < 9_990; i++) {
+            distinct.add(props("k" + i, i));
+        }
+        JSONArray wire = Util.remapProperties(extractor.extractSchema(props("distinct", distinct), false));
+        assertEquals(9_990, wire.getJSONObject(0).getJSONArray("children").length());
+
+        List<Object> same = new ArrayList<>();
+        for (int i = 0; i < 4_990; i++) {
+            same.add(i % 2 == 0 ? props("a", i, "b", "x") : props("b", "y", "a", i));
+        }
+        wire = Util.remapProperties(extractor.extractSchema(props("same", same), false));
+        assertEquals(1, wire.getJSONObject(0).getJSONArray("children").length());
     }
 
     @Test

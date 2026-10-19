@@ -73,7 +73,7 @@ public class NetworkTests {
         AvoInspector inspector = inspector(AvoInspectorEnv.Staging, 1);
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("zero", 0.0);
-        inspector.trackSchemaFromEvent("Event", props);
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(props).build());
         inspector.flush();
 
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
@@ -203,9 +203,9 @@ public class NetworkTests {
         server.respond(200, "{\"success\":false}");
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
 
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         inspector.flush();
-        inspector.trackSchemaFromEvent("Event", Collections.<String, Object>singletonMap("a", 1));
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>singletonMap("a", 1)).build());
         inspector.flush();
 
         assertEquals(2, server.requests().size());
@@ -216,7 +216,7 @@ public class NetworkTests {
         AvoInspector dropping = inspector(AvoInspectorEnv.Staging, 10);
         dropping.setSamplingRateForTesting(0.0);
         for (int i = 0; i < 100; i++) {
-            dropping.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            dropping.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         assertEquals(0, dropping.batcher.bufferedCount());
         dropping.flush();
@@ -225,7 +225,7 @@ public class NetworkTests {
         AvoInspector keeping = inspector(AvoInspectorEnv.Staging, 10);
         keeping.setSamplingRateForTesting(1.0);
         for (int i = 0; i < 100; i++) {
-            keeping.trackSchemaFromEvent("Event", Collections.<String, Object>emptyMap());
+            keeping.trackSchemaFromEvent(InspectorEvent.builder().eventName("Event").eventProperties(Collections.<String, Object>emptyMap()).build());
         }
         keeping.flush();
         int events = 0;
@@ -245,12 +245,12 @@ public class NetworkTests {
         }
         inspector.networkCallsHandler.endpointForTesting = unreachable;
 
-        inspector.trackSchemaFromEvent("E1", Collections.<String, Object>emptyMap());
-        inspector.trackSchemaFromEvent("E2", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E1").eventProperties(Collections.<String, Object>emptyMap()).build());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E2").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
 
         inspector.networkCallsHandler.endpointForTesting = server.url();
-        inspector.trackSchemaFromEvent("E3", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("E3").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
 
         assertEquals(1, server.requests().size());
@@ -276,6 +276,81 @@ public class NetworkTests {
             handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
             assertEquals(AvoNetworkCallsHandler.SendResult.FAILED, handler.send(eventWithPadding(1), "test-key"));
             acceptor.join();
+        }
+    }
+
+    @Test(timeout = 10_000)
+    public void aTwoHundredWhoseBodyCannotBeParsedStillCountsAsDelivered() throws Exception {
+        AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("staging") {
+            @Override
+            void updateSamplingRate(String responseBody) {
+                // As after an undeploy closed the class loader before org.json's parser was loaded.
+                throw new NoClassDefFoundError("org/json/JSONTokener");
+            }
+        };
+        handler.endpointForTesting = server.url();
+        handler.samplingRate = 0.5;
+
+        AvoLog.resetForTesting();
+        java.io.PrintStream originalErr = System.err;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, "UTF-8"));
+        AvoNetworkCallsHandler.SendResult result;
+        try {
+            result = handler.send(eventWithPadding(1), "test-key");
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertEquals(AvoNetworkCallsHandler.SendResult.OK, result);
+        assertEquals(0.5, handler.samplingRate, 0.0);
+        assertEquals("", captured.toString("UTF-8"));
+        assertEquals(1, server.requests().size());
+    }
+
+    @Test(timeout = 10_000)
+    public void aTwoHundredCutOffMidBodyStillCountsAsDeliveredAndKeepsTheRate() throws Exception {
+        // The status decides. What arrives may itself parse ({"samplingRate":0} would stop all
+        // sending), may not parse, or may be nothing at all; Content-Length promises 100 bytes.
+        for (String partial : new String[]{"{\"samplingRate\":0}", "{\"samplingRate\":0.1", ""}) {
+            assertCutOffTwoHundredKeepsTheRate(partial);
+        }
+    }
+
+    private void assertCutOffTwoHundredKeepsTheRate(final String partial) throws Exception {
+        try (final ServerSocket socket = new ServerSocket(0)) {
+            final java.util.concurrent.atomic.AtomicBoolean answered = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread responder = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try (Socket client = socket.accept()) {
+                        java.io.InputStream in = client.getInputStream();
+                        StringBuilder head = new StringBuilder();
+                        while (!head.toString().endsWith("\r\n\r\n")) {
+                            head.append((char) in.read());
+                        }
+                        java.util.regex.Matcher length = java.util.regex.Pattern
+                                .compile("(?i)content-length: *(\\d+)").matcher(head);
+                        length.find();
+                        for (int remaining = Integer.parseInt(length.group(1)); remaining > 0; remaining--) {
+                            in.read();
+                        }
+                        client.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                + "Content-Length: 100\r\n\r\n" + partial).getBytes(StandardCharsets.UTF_8));
+                        client.getOutputStream().flush();
+                        answered.set(true);
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+            responder.start();
+
+            AvoNetworkCallsHandler handler = new AvoNetworkCallsHandler("staging");
+            handler.endpointForTesting = "http://127.0.0.1:" + socket.getLocalPort() + "/";
+            handler.samplingRate = 0.5;
+            assertEquals(partial, AvoNetworkCallsHandler.SendResult.OK, handler.send(eventWithPadding(1), "test-key"));
+            assertEquals(partial, 0.5, handler.samplingRate, 0.0);
+            responder.join();
+            assertTrue(partial, answered.get());
         }
     }
 
@@ -306,7 +381,7 @@ public class NetworkTests {
     @Test
     public void bodyIsUtf8() throws Exception {
         AvoInspector inspector = inspector(AvoInspectorEnv.Dev, 1);
-        inspector.trackSchemaFromEvent("Événement ✓", Collections.<String, Object>emptyMap());
+        inspector.trackSchemaFromEvent(InspectorEvent.builder().eventName("Événement ✓").eventProperties(Collections.<String, Object>emptyMap()).build());
         inspector.flush();
         MockInspectorServer.Request request = server.awaitRequest(0, 5000);
         assertNotNull(request);
