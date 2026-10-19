@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 (2026-10-06)
+## 2.0.0 (2026-10-19)
 
 Implements [avohq/spec-first-inspector-server-sdk](https://github.com/avohq/spec-first-inspector-server-sdk) v3.0.1: the `/inspector/v2/track` endpoint with the `api-key`, `env` and `X-Avo-Client` headers, gzip for bodies of 1 KiB or more, batching with `flush()` and `destroy()`, stream ids and gateway coordinates. This is a breaking release, led by the track call: `trackSchemaFromEvent` now takes one `InspectorEvent`, and every positional form, the 1.x ones included, is removed. Constructors are unchanged; see [Upgrading from 1.x to 2.0](README.md#upgrading-from-1x-to-20) in the README.
 
